@@ -2,12 +2,6 @@
  *
  * normalizer.js - Appiattisce strutture JSON annidate
  *
- * Prima:
- *   { "timestamp": { "$date": "2020-12-19" }, "inputs": [{ "inputValue": 87 }] }
- *
- * Dopo:
- *   { "timestamp.$date": "2020-12-19", "inputs.0.inputValue": 87 }
- *
  */
 
 /**
