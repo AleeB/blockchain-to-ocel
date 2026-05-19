@@ -1,0 +1,705 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>blockchain-to-ocel · Dynamic Mapping</title>
+    <style>
+      /* #region Reset and Base */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      :root {
+        --bg: #0f1117;
+        --surface: #1a1d27;
+        --border: #2e3147;
+        --accent: #6c63ff;
+        --accent2: #00d4aa;
+        --text: #e2e4ef;
+        --muted: #7b80a0;
+        --error: #ff5b6b;
+        --warn: #f5a623;
+        --success: #00d4aa;
+        --radius: 10px;
+      }
+
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Segoe UI", system-ui, sans-serif;
+        font-size: 14px;
+        line-height: 1.6;
+        min-height: 100vh;
+      }
+
+      /* Layout */
+      .app {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 24px 16px 80px;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding-bottom: 20px;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 28px;
+      }
+      header .logo {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--accent);
+      }
+      header .sub {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      /* Progress bar */
+      .progress {
+        display: flex;
+        gap: 0;
+        margin-bottom: 32px;
+      }
+      .step-dot {
+        flex: 1;
+        padding: 8px 4px;
+        text-align: center;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--muted);
+        border-bottom: 3px solid var(--border);
+        transition: all 0.2s;
+      }
+      .step-dot.active {
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+      .step-dot.done {
+        color: var(--accent2);
+        border-color: var(--accent2);
+      }
+
+      /* Cards / panels */
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 24px;
+        margin-bottom: 20px;
+      }
+      .card-title {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--text);
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .card-title .num {
+        background: var(--accent);
+        color: #fff;
+        border-radius: 50%;
+        width: 22px;
+        height: 22px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+      .card-desc {
+        color: var(--muted);
+        font-size: 13px;
+        margin-bottom: 16px;
+      }
+
+      /* Upload Card */
+      .upload-zone {
+        border: 2px dashed var(--border);
+        border-radius: var(--radius);
+        padding: 40px 20px;
+        text-align: center;
+        cursor: pointer;
+        transition:
+          border-color 0.2s,
+          background 0.2s;
+      }
+      .upload-zone:hover,
+      .upload-zone.drag {
+        border-color: var(--accent);
+        background: #1e2135;
+      }
+      .upload-zone .icon {
+        font-size: 36px;
+        margin-bottom: 8px;
+      }
+      .upload-zone p {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .upload-zone strong {
+        color: var(--text);
+      }
+      #fileInput {
+        display: none;
+      }
+
+      /*Columns */
+      .tag-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .tag {
+        padding: 5px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        border: 1px solid var(--border);
+        cursor: pointer;
+        transition: all 0.15s;
+        user-select: none;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .tag:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .tag.selected {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      .tag .sample {
+        font-size: 10px;
+        opacity: 0.7;
+      }
+
+      /* Select / Input */
+      select,
+      input[type="text"] {
+        width: 100%;
+        padding: 9px 12px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text);
+        font-size: 13px;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      select:focus,
+      input[type="text"]:focus {
+        border-color: var(--accent);
+      }
+
+      label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      .field {
+        margin-bottom: 14px;
+      }
+
+      /* Rule rows */
+      .rule-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .rule-row {
+        display: grid;
+        gap: 8px;
+        align-items: center;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px 12px;
+      }
+      .rule-row.e2o {
+        grid-template-columns: 2fr 2fr 2fr auto;
+      }
+      .rule-row.o2o {
+        grid-template-columns: 2fr 2fr 2fr 2fr 2fr auto;
+      }
+      .rule-row select,
+      .rule-row input {
+        margin: 0;
+      }
+      .btn-rm {
+        background: none;
+        border: 1px solid var(--error);
+        color: var(--error);
+        border-radius: 4px;
+        padding: 4px 8px;
+        cursor: pointer;
+        font-size: 12px;
+        transition: background 0.15s;
+      }
+      .btn-rm:hover {
+        background: var(--error);
+        color: #fff;
+      }
+
+      /* Buttons */
+      .btn {
+        padding: 10px 20px;
+        border-radius: 6px;
+        border: none;
+        font-weight: 600;
+        font-size: 13px;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .btn-primary {
+        background: var(--accent);
+        color: #fff;
+      }
+      .btn-primary:hover {
+        background: #5750e0;
+      }
+      .btn-secondary {
+        background: var(--surface);
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+      .btn-secondary:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .btn-success {
+        background: var(--accent2);
+        color: #000;
+      }
+      .btn-success:hover {
+        background: #00b891;
+      }
+      .btn-add {
+        margin-top: 10px;
+        font-size: 12px;
+        color: var(--accent2);
+        background: none;
+        border: 1px dashed var(--accent2);
+        border-radius: 6px;
+        padding: 6px 14px;
+        cursor: pointer;
+        width: 100%;
+        transition: background 0.15s;
+      }
+      .btn-add:hover {
+        background: #00d4aa18;
+      }
+
+      .nav {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 24px;
+      }
+
+      /* Preview / stats */
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        margin-top: 12px;
+      }
+      .stat-box {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px 16px;
+      }
+      .stat-box .val {
+        font-size: 28px;
+        font-weight: 700;
+        color: var(--accent2);
+      }
+      .stat-box .lbl {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+
+      .msg {
+        padding: 10px 14px;
+        border-radius: 6px;
+        font-size: 13px;
+        margin-top: 8px;
+      }
+      .msg.warn {
+        background: #f5a62318;
+        border: 1px solid var(--warn);
+        color: var(--warn);
+      }
+      .msg.error {
+        background: #ff5b6b18;
+        border: 1px solid var(--error);
+        color: var(--error);
+      }
+      .msg.success {
+        background: #00d4aa18;
+        border: 1px solid var(--success);
+        color: var(--success);
+      }
+
+      .json-preview {
+        margin-top: 12px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 12px;
+        font-family: monospace;
+        font-size: 11px;
+        color: var(--muted);
+        overflow-x: auto;
+        white-space: pre;
+        max-height: 280px;
+        overflow-y: auto;
+      }
+
+      /* TEXT AREA */
+      textarea {
+        width: 100%;
+        padding: 9px 12px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text);
+        font-size: 12px;
+        font-family: monospace;
+        line-height: 1.5;
+        outline: none;
+        resize: vertical;
+        transition: border-color 0.15s;
+      }
+      textarea:focus {
+        border-color: var(--accent);
+      }
+      textarea::placeholder {
+        color: var(--muted);
+      }
+
+      .or-divider {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 18px 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .or-divider::before,
+      .or-divider::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--border);
+      }
+
+      /* Start-over button */
+      .btn-restart {
+        border-color: var(--warn) !important;
+        color: var(--warn) !important;
+      }
+      .btn-restart:hover {
+        background: #f5a62318 !important;
+      }
+
+      /*Hidden Area */
+      .hidden {
+        display: none !important;
+      }
+
+      /* Layout grid for 2 selects */
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .grid-3 {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 12px;
+      }
+      /* #endregion */
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <!-- Header -->
+      <header>
+        <div>
+          <div class="logo">blockchain-to-ocel</div>
+          <div class="sub">Dynamic JSON → OCEL 2.0 mapping</div>
+        </div>
+      </header>
+
+      <!-- Step progress -->
+      <div class="progress" id="progress">
+        <div class="step-dot active" data-step="0">Upload</div>
+        <div class="step-dot" data-step="1">Normalize</div>
+        <div class="step-dot" data-step="2">Core fields</div>
+        <div class="step-dot" data-step="3">Objects</div>
+        <div class="step-dot" data-step="4">Attributes</div>
+        <div class="step-dot" data-step="5">E2O</div>
+        <div class="step-dot" data-step="6">O2O</div>
+        <div class="step-dot" data-step="7">Result</div>
+      </div>
+
+      <!-- STEP 0: Upload-->
+      <div id="step-0">
+        <div class="card">
+          <div class="card-title"><span class="num">1</span> Upload JSON</div>
+          <div class="upload-zone" id="uploadZone">
+            <div class="icon">📂</div>
+            <strong>Click to choose a file</strong>
+            <p>or drag &amp; drop here &nbsp;·&nbsp; .json / .jsonl</p>
+            <input type="file" id="fileInput" accept=".json,.jsonl" />
+          </div>
+          <div id="uploadStatus" class="hidden" style="margin-top: 12px"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span class="num" style="background: var(--accent2); color: #000"
+              >✎</span
+            >
+            Or paste JSON directly
+          </div>
+          <textarea
+            id="jsonPasteArea"
+            rows="7"
+            placeholder='[ { "eventId": "e1", "activity": "create-order", ... } ]'
+          ></textarea>
+          <button
+            class="btn btn-secondary"
+            style="margin-top: 10px; width: 100%"
+            onclick="loadFromText()"
+          >
+            Next: Load from text
+          </button>
+        </div>
+
+        <div class="nav">
+          <span></span>
+          <button class="btn btn-primary hidden" id="btn01" onclick="goTo(1)">
+            Next: Normalize
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 1: Normalize -->
+      <div id="step-1" class="hidden">
+        <div class="card">
+          <div class="card-title">
+            <span class="num">2</span> Flatten nested fields
+          </div>
+          <div class="card-desc">
+            Select which columns contain nested objects or arrays of objects to
+            flatten. Selected columns will be expanded with dot-notation keys
+            (For example <code>inputs.0.inputValue</code>).
+          </div>
+          <div id="nestedCols"></div>
+          <div id="flatPreview" class="hidden">
+            <div style="margin-top: 16px; font-size: 12px; color: var(--muted)">
+              Available columns after normalization:
+            </div>
+            <div
+              id="allColsPreview"
+              class="tag-grid"
+              style="margin-top: 8px; cursor: default"
+            ></div>
+          </div>
+        </div>
+        <div class="nav">
+          <button class="btn btn-secondary" onclick="goTo(0)">Back</button>
+          <button class="btn btn-primary" id="btn12" onclick="doNormalize()">
+            Normalize &amp; Continue
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 2: Core fields -->
+      <div id="step-2" class="hidden">
+        <div class="card">
+          <div class="card-title">
+            <span class="num">3</span> Core OCEL fields
+          </div>
+          <div class="card-desc">Map the three core OCEL fields.</div>
+          <div class="field">
+            <label>Event ID column</label>
+            <select id="sel-eventId"></select>
+          </div>
+          <div class="field">
+            <label>Activity column</label>
+            <select id="sel-activity"></select>
+          </div>
+          <div class="field">
+            <label>Timestamp column</label>
+            <select id="sel-timestamp"></select>
+          </div>
+        </div>
+        <div class="nav">
+          <button class="btn btn-secondary" onclick="goTo(1)">Back</button>
+          <button class="btn btn-primary" onclick="goTo(3)">
+            Next: Objects
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 3: Object types -->
+      <div id="step-3" class="hidden">
+        <div class="card">
+          <div class="card-title"><span class="num">4</span> Object types</div>
+          <div class="card-desc">
+            Select which columns represent participating entities (accounts,
+            contracts, assets…). For each one, choose a type name for OCEL.
+          </div>
+          <div id="objectTagGrid" class="tag-grid"></div>
+          <div
+            id="typeNameRows"
+            style="
+              margin-top: 16px;
+              display: flex;
+              flex-direction: column;
+              gap: 10px;
+            "
+          ></div>
+        </div>
+        <div class="nav">
+          <button class="btn btn-secondary" onclick="goTo(2)">Back</button>
+          <button class="btn btn-primary" onclick="goTo(4)">
+            Next: Attributes
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 4: Attributes -->
+      <div id="step-4" class="hidden">
+        <div class="card">
+          <div class="card-title"><span class="num">5</span> Attributes</div>
+          <div class="card-desc">
+            Assign remaining columns as object attributes or event attributes.
+          </div>
+
+          <div id="attrSection">
+            <div
+              style="
+                font-weight: 600;
+                margin-bottom: 10px;
+                color: var(--accent);
+              "
+            >
+              Object attributes
+            </div>
+            <div id="objAttrRows"></div>
+            <div
+              style="
+                font-weight: 600;
+                margin: 18px 0 10px;
+                color: var(--accent);
+              "
+            >
+              Event attributes
+            </div>
+            <div class="tag-grid" id="evAttrGrid"></div>
+          </div>
+        </div>
+        <div class="nav">
+          <button class="btn btn-secondary" onclick="goTo(3)">Back</button>
+          <button class="btn btn-primary" onclick="goTo(5)">Next: E2O</button>
+        </div>
+      </div>
+
+      <!-- STEP 5: E2O qualifiers -->
+      <div id="step-5" class="hidden">
+        <div class="card">
+          <div class="card-title">
+            <span class="num">6</span> E2O qualifiers
+          </div>
+          <div class="card-desc">
+            Define the <em>role</em> of each object in an event. For example
+            <code>sender → account : initiator</code>.
+          </div>
+          <div id="e2oList" class="rule-list"></div>
+          <button class="btn-add" onclick="addE2ORow()">+ Add E2O rule</button>
+        </div>
+        <div class="nav">
+          <button class="btn btn-secondary" onclick="goTo(4)">Back</button>
+          <button class="btn btn-primary" onclick="goTo(6)">Next: O2O</button>
+        </div>
+      </div>
+
+      <!-- STEP 6: O2O rules -->
+      <div id="step-6" class="hidden">
+        <div class="card">
+          <div class="card-title">
+            <span class="num">7</span> O2O relationships
+          </div>
+          <div class="card-desc">
+            Define direct relationships between objects. For example:
+            <code>account → contract : interacts_with</code>.
+          </div>
+          <div id="o2oList" class="rule-list"></div>
+          <button class="btn-add" onclick="addO2ORow()">+ Add O2O rule</button>
+        </div>
+        <div class="nav">
+          <button class="btn btn-secondary" onclick="goTo(5)">Back</button>
+          <button class="btn btn-primary" onclick="runMapping()">
+            Run mapping
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 7: Result -->
+      <div id="step-7" class="hidden">
+        <div class="card">
+          <div class="card-title"><span class="num">8</span> Result</div>
+          <div class="card-desc">
+            OCEL 2.0 mapping successfully. Now you can download the file
+          </div>
+          <div class="stats-grid" id="statsGrid"></div>
+          <div id="resultMsgs" style="margin-top: 12px"></div>
+          <div class="json-preview" id="jsonPreview"></div>
+        </div>
+        <div class="nav" style="flex-wrap: wrap; gap: 10px">
+          <button class="btn btn-secondary" onclick="goTo(6)">Back</button>
+          <div
+            style="
+              display: flex;
+              gap: 10px;
+              flex-wrap: wrap;
+              align-items: center;
+            "
+          >
+            <button class="btn btn-secondary" onclick="dl('config')">
+              Download config.json
+            </button>
+            <button class="btn btn-success" onclick="dl('ocel')">
+              Download output.jsonocel
+            </button>
+            <button class="btn btn-secondary btn-restart" onclick="resetAll()">
+              Start over
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/public/app.js"></script>
+  </body>
+</html>

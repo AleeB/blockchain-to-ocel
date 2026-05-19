@@ -1,0 +1,34 @@
+{
+  "name": "blockchain-to-ocel",
+  "version": "0.1.0",
+  "description": "Libreria e CLI per convertire dati blockchain in formato OCEL 2.0",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./browser": "./src/browser.js"
+  },
+  "bin": {
+    "blockchain-to-ocel": "./entrypoints/cli.js"
+  },
+  "scripts": {
+    "start": "node entrypoints/server.js",
+    "cli": "node entrypoints/cli.js",
+    "wizard": "node entrypoints/cli.js wizard",
+    "convert": "node entrypoints/cli.js convert"
+  },
+  "dependencies": {
+    "inquirer": "^12.0.0"
+  },
+  "keywords": [
+    "ocel",
+    "ocel2",
+    "blockchain",
+    "process-mining",
+    "ethereum",
+    "object-centric",
+    "event-log",
+    "cli"
+  ],
+  "license": "MIT"
+}
