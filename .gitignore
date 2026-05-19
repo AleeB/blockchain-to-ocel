@@ -1,20 +1,18 @@
-# ── Dipendenze Node.js ────────────────────────────────────────────────
+# Dipendenze Node.js 
 node_modules/
 
-# ── Output di build / log di conversione ─────────────────────────────
+# Output di build / log di conversione
 *.jsonocel
 *.log
 
-# ── Config salvati dal wizard (contengono percorsi locali) ───────────
+# Config salvati dal wizard (contengono percorsi locali) 
 config.json
 
-# ── macOS: file di metadati creati su filesystem exFAT/FAT32 ─────────
 .DS_Store
 ._*
 .AppleDouble
 .LSOverride
 
-# ── macOS: cartelle virtuali ──────────────────────────────────────────
 .Spotlight-V100
 .Trashes
 .fseventsd
