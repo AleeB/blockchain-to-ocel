@@ -14,11 +14,7 @@
   "scripts": {
     "start": "node entrypoints/server.js",
     "cli": "node entrypoints/cli.js",
-    "wizard": "node entrypoints/cli.js wizard",
     "convert": "node entrypoints/cli.js convert"
-  },
-  "dependencies": {
-    "inquirer": "^12.0.0"
   },
   "keywords": [
     "ocel",
