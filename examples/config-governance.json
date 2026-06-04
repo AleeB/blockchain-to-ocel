@@ -1,0 +1,15 @@
+{
+  "eventIdColumn": "transactionHash",
+  "activityColumn": "functionName",
+  "timestampColumn": "timestamp.$date",
+  "columnsToNormalize": ["_id", "timestamp", "inputs", "events", "storageState"],
+  "objectTypes": [
+    { "name": "wallet", "idColumn": "sender", "attributes": [] },
+    { "name": "contract", "idColumn": "contractAddress", "attributes": [] }
+  ],
+  "eventAttributes": ["gasUsed", "value"],
+  "e2oRules": [],
+  "o2oRules": [
+    { "sourceType": "wallet", "sourceColumn": "sender", "targetType": "contract", "targetColumn": "contractAddress", "qualifier": "interacts-with" }
+  ]
+}

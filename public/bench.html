@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <title>blockchain-to-ocel · Browser Benchmark</title>
+    <style>
+      body { font-family: monospace; padding: 20px; background:#0f1117; color:#e2e4ef; }
+      pre { font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <h1>Browser Benchmark (Wizard core)</h1>
+    <pre id="out">In esecuzione...\n</pre>
+
+    <script type="module">
+      import {
+        normalizeRecords,
+        OcelMapper,
+        validateOcel,
+        serializeOcel,
+      } from "../src/browser.js";
+
+      const out = document.getElementById("out");
+      const log = (s) => { out.textContent += s + "\n"; };
+
+      // Stesso dataset sintetico di bench.mjs
+      function makeRecords(n) {
+        const records = [];
+        const activities = ["transfer", "approve", "sendFrom", "mint", "burn"];
+        for (let i = 0; i < n; i++) {
+          records.push({
+            txHash: `0x${i.toString(16).padStart(8, "0")}`,
+            blockNumber: String(19000000 + i),
+            contractAddress: `0xC${(i % 50).toString(16)}`,
+            sender: `0xW${(i % 2000).toString(16)}`,
+            gasUsed: String(21000 + (i % 100000)),
+            activity: activities[i % activities.length],
+            timestamp: new Date(1700000000000 + i * 1000).toISOString(),
+            inputs: [
+              { inputName: "to", type: "address", inputValue: `0xW${(i % 2000).toString(16)}` },
+              { inputName: "amount", type: "uint256", inputValue: i * 1000 },
+            ],
+            events: [
+              { eventName: "Transfer", eventValues: { from: `0xW${(i % 2000)}`, value: i } },
+            ],
+          });
+        }
+        return records;
+      }
+
+      const config = {
+        eventIdColumn: "txHash",
+        activityColumn: "activity",
+        timestampColumn: "timestamp",
+        columnsToNormalize: ["inputs", "events"],
+        objectTypes: [
+          { name: "wallet", idColumn: "sender", attributes: [] },
+          { name: "contract", idColumn: "contractAddress", attributes: [] },
+        ],
+        eventAttributes: ["gasUsed"],
+        e2oRules: [],
+        o2oRules: [],
+      };
+
+      async function run() {
+        const sizes = [1000, 10000, 50000, 100000, 250000, 500000];
+        log("N,timeMs,heapMB,events,objects");
+        for (const N of sizes) {
+          const raw = makeRecords(N);
+          const t0 = performance.now();
+          const records = normalizeRecords(raw, config.columnsToNormalize);
+          const mapper = new OcelMapper(config);
+          const ocel = mapper.map(records);
+          validateOcel(ocel);
+          serializeOcel(ocel);
+          const t1 = performance.now();
+          const heapMB = performance.memory
+            ? (performance.memory.usedJSHeapSize / (1024 * 1024)).toFixed(1)
+            : "n/a";
+          log(`${N},${(t1 - t0).toFixed(1)},${heapMB},${ocel.events.length},${ocel.objects.length}`);
+          await new Promise((r) => setTimeout(r, 50)); // lascia respirare il GC
+        }
+        log("FATTO");
+      }
+      run();
+    </script>
+  </body>
+</html>
