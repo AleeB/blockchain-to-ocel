@@ -5,6 +5,18 @@
  * Non legge file, non appiattisce, non valida: fa solo il mapping.
  */
 
+import { UUID_SENTINEL } from "./wizard-helpers.js";
+
+// crypto.randomUUID() è disponibile sia in Node ≥ 14.17 che nei browser moderni
+function genUuid() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  // fallback estremo (browser molto vecchi): UUID v4 non crittografico
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 export class OcelMapper {
   /**
    * @param {import('./types.js').MappingConfig} config
@@ -18,10 +30,13 @@ export class OcelMapper {
 
   /** Controlla che il config abbia almeno i campi obbligatori */
   _validateConfig() {
-    const { activityColumn, eventIdColumn, objectTypes } = this.config;
+    const { activityColumn, eventIdColumn, objectTypes, activitySources } = this.config;
 
-    if (!activityColumn)
-      throw new Error("MappingConfig: activityColumn is required");
+    // È valido se c'è almeno una sorgente di activity: o la vecchia
+    // activityColumn singola, o la nuova lista activitySources
+    const hasActivity = !!activityColumn || (activitySources && activitySources.length > 0);
+    if (!hasActivity)
+      throw new Error("MappingConfig: serve almeno una activity column / activitySource");
     if (!eventIdColumn)
       throw new Error("MappingConfig: eventIdColumn is required");
 
@@ -42,24 +57,106 @@ export class OcelMapper {
 
   /**
    * Trasforma i record normalizzati in un documento OCEL 2.0.
-   * @param {object[]} records
+   *
+   * @param {object[]} records   - record normalizzati (chiavi piatte)
+   * @param {object[]} [rawRecords] - record originali NON normalizzati;
+   *   serve solo se sono configurate additionalEventSources, perché
+   *   il mapper deve accedere agli array originali per generare eventi
+   *   secondari. Se omesso, additionalEventSources viene ignorato.
    * @returns {import('./types.js').OcelLog}
    */
-  map(records) {
+  /**
+   * Versione sincrona — usata in tests e in CLI per dataset piccoli.
+   * Consuma il generator interno fino in fondo.
+   */
+  map(records, rawRecords) {
+    this._rawRecords = rawRecords ?? null;
+    const gen = this._processGenerator(records);
+    let r = gen.next();
+    while (!r.done) r = gen.next();
+    return r.value;
+  }
+
+  /**
+   * Versione asincrona — chiama onProgress ogni `progressEvery` record e
+   * cede il controllo al browser così il loader UI può aggiornarsi.
+   *
+   * @param {object[]} records
+   * @param {object[]} [rawRecords]
+   * @param {object} [opts]
+   * @param {(p: {phase: string, processed: number, total: number, ratio: number}) => void} [opts.onProgress]
+   * @param {number} [opts.progressEvery=500]
+   * @returns {Promise<import('./types.js').OcelLog>}
+   */
+  async mapAsync(records, rawRecords, opts = {}) {
+    const { onProgress, progressEvery = 500 } = opts;
+    this._rawRecords = rawRecords ?? null;
+    const total = records.length;
+    const gen = this._processGenerator(records);
+    let r = gen.next();
+    let processed = 0;
+    onProgress?.({ phase: "mapping", processed: 0, total, ratio: 0 });
+    while (!r.done) {
+      processed = r.value; // il generator yield-a l'indice del record appena processato
+      if (processed > 0 && processed % progressEvery === 0) {
+        onProgress?.({
+          phase: "mapping",
+          processed,
+          total,
+          ratio: total > 0 ? processed / total : 0,
+        });
+        // cede il controllo al browser (1 task del macrotask queue)
+        await new Promise((res) => setTimeout(res, 0));
+      }
+      r = gen.next();
+    }
+    onProgress?.({ phase: "done", processed: total, total, ratio: 1 });
+    return r.value;
+  }
+
+  /**
+   * Generator interno: produce gli eventi un record alla volta e alla fine
+   * restituisce l'OCEL completo. Yield-a l'indice del record processato
+   * così il caller (sync o async) sa dove siamo arrivati.
+   * @private
+   */
+  *_processGenerator(records) {
     const ocel = this._createEmptyOcel();
 
     // objectsMap raccoglie gli oggetti ed evita i duplicati
     // La chiave e' "tipooggetto:idoggetto" (es. "wallet:0xAaBb...")
     const objectsMap = new Map();
 
+    // Determina le activity sources: se più di una, ogni record produce N eventi
+    // (uno per ogni source). Se vuota o singola, fallback al vecchio activityColumn.
+    const sources = (this.config.activitySources && this.config.activitySources.length)
+      ? this.config.activitySources
+      : [{ column: this.config.activityColumn, typeName: null }];
+
     // Fase 1: un record alla volta
-    for (const record of records) {
-      const eventId = String(record[this.config.eventIdColumn]);
-      const activity = record[this.config.activityColumn];
+    for (let recIdx = 0; recIdx < records.length; recIdx++) {
+      const record = records[recIdx];
+      this._currentRecord = record; // accessibile da _applyE2ORules nei sub-eventi
+      const rawRecord = this._rawRecords?.[recIdx] ?? record;
       const time = this._parseTimestamp(record[this.config.timestampColumn]);
 
-      // Salta record senza ID o senza activity: non possono diventare eventi OCEL
-      if (!eventId || !activity) continue;
+      for (const src of sources) {
+        const eventId = this._resolveEventId(record);
+        const cellValue = record[src.column];
+        // Se la cella è vuota per QUESTA sorgente, salta SOLO questo evento.
+        // Le altre sorgenti dello stesso record possono comunque produrre eventi.
+        if (!eventId || cellValue === null || cellValue === undefined || cellValue === "")
+          continue;
+
+        // Se typeName è valorizzato → event.type = typeName (l'utente ha già
+        // scelto un nome esplicito). Altrimenti → event.type = "colonna:valore"
+        // per rendere visibile la provenienza nel log e nei tool OCPM.
+        // Il valore originale finisce in attributes._activity per analisi a valle.
+        const rawCell = String(cellValue);
+        const activity = src.typeName || `${src.column}:${rawCell}`;
+        const extraAttrs = src.typeName
+          ? { _activity: rawCell }
+          : { _activity: rawCell, _source: src.column };
 
       // 1a. Registra il tipo di evento (una sola volta per tipo)
       if (!ocel.eventTypes.find((et) => et.name === activity)) {
@@ -74,7 +171,7 @@ export class OcelMapper {
         id: eventId,
         type: activity,
         time,
-        attributes: this._extractEventAttributes(record),
+        attributes: { ...this._extractEventAttributes(record), ...extraAttrs },
         relationships: [],
       };
 
@@ -110,32 +207,21 @@ export class OcelMapper {
         });
       }
 
-      // 1d. Applica le regole E2O (qualifier personalizzati)
-      // Aggiungono relazioni in piu', non sostituiscono quelle di default
-      if (this.config.e2oRules) {
-        for (const rule of this.config.e2oRules) {
-          const objectId = record[rule.column];
-          if (objectId === null || objectId === undefined || objectId === "")
-            continue;
-
-          const mapKey = `${rule.objectType}:${objectId}`;
-          if (!objectsMap.has(mapKey)) {
-            objectsMap.set(mapKey, {
-              id: String(objectId),
-              type: rule.objectType,
-              attributes: {},
-            });
-          }
-
-          event.relationships.push({
-            objectId: String(objectId),
-            qualifier: rule.qualifier,
-          });
-        }
-      }
+      // 1d. Applica le regole E2O per il tipo di evento corrente.
+      this._applyE2ORules(record, event, objectsMap);
 
       ocel.events.push(event);
-    }
+
+      // 1e. Eventi aggiuntivi estratti da array annidati nel record raw
+      // Es: blockchain tx → events[] (eventi emessi) + internalTxs[] (chiamate interne)
+      // Ogni elemento diventa un evento OCEL distinto, con gli stessi oggetti del padre
+      this._emitAdditionalEvents(rawRecord, event, ocel, objectsMap);
+      } // chiude for (const src of sources)
+
+      // Yield al caller per consentirgli di aggiornare il loader UI.
+      // In modalità sync il valore viene semplicemente ignorato.
+      yield recIdx + 1;
+    } // chiude for (record of records)
 
     // Fase 2: relazioni O2O
     // Va fatto prima di scrivere ocel.objects perche' potrebbe aggiungere
@@ -149,6 +235,93 @@ export class OcelMapper {
     ocel.objects = Array.from(objectsMap.values());
 
     return ocel;
+  }
+
+  /**
+   * Restituisce l'ID dell'evento principale per un record.
+   * Se eventIdColumn === UUID_SENTINEL, genera un UUID v4 al volo.
+   * Altrimenti pesca dalla colonna indicata.
+   * @private
+   */
+  _resolveEventId(record) {
+    if (this.config.eventIdColumn === UUID_SENTINEL) return genUuid();
+    const v = record[this.config.eventIdColumn];
+    return v === undefined || v === null ? "" : String(v);
+  }
+
+  /**
+   * Genera eventi secondari da array annidati nel record raw.
+   * Ogni elemento dell'array diventa un evento OCEL distinto
+   * che eredita gli oggetti e il timestamp del record padre.
+   * Le relazioni del padre vengono replicate con un qualifier specifico
+   * della sorgente per distinguerle nei tool OCPM.
+   * @private
+   */
+  _emitAdditionalEvents(rawRecord, parentEvent, ocel, objectsMap) {
+    const sources = this.config.additionalEventSources;
+    if (!sources || !sources.length) return;
+    if (!this._rawRecords) return; // serve l'accesso al raw
+
+    for (const src of sources) {
+      const arr = rawRecord[src.arrayPath];
+      if (!Array.isArray(arr)) continue;
+
+      for (const item of arr) {
+        if (!item || typeof item !== "object") continue;
+
+        const rawActivity = src.activityField ? item[src.activityField] : src.qualifier;
+        if (rawActivity === null || rawActivity === undefined || rawActivity === "")
+          continue;
+
+        // Filtro per tipo: se includeTypes è specificato e non vuoto,
+        // emettiamo l'evento solo se il suo tipo è nella whitelist.
+        // includeTypes vuoto / assente = nessun filtro (include tutti).
+        if (
+          Array.isArray(src.includeTypes) &&
+          src.includeTypes.length > 0 &&
+          !src.includeTypes.includes(String(rawActivity))
+        ) {
+          continue;
+        }
+
+        const id = src.idField && item[src.idField]
+          ? String(item[src.idField])
+          : genUuid();
+
+        // Path semantico dell'origine del sub-evento (es. "events.eventName",
+        // "internalTxs.activity"). Lo prefissiamo al valore così l'event.type
+        // dice CHIARAMENTE da dove arriva l'evento, e si evita la collisione
+        // di nomi (es. lock principale vs lock interno).
+        const sourcePath = src.activityField
+          ? `${src.arrayPath}.${src.activityField}`
+          : src.arrayPath;
+        const activity = `${sourcePath}:${String(rawActivity)}`;
+
+        // Registra il tipo di evento secondario
+        if (!ocel.eventTypes.find((et) => et.name === activity)) {
+          ocel.eventTypes.push({ name: activity, attributes: [] });
+        }
+
+        // Il sub-evento parte con le relazioni di default dal padre
+        // (oggetti del record sorgente), poi vengono filtrate le E2O specifiche
+        // per il suo tipo. Così "Approval" può avere regole diverse da "lock".
+        const subEvent = {
+          id,
+          type: activity,
+          time: parentEvent.time,
+          attributes: {
+            _source: src.qualifier,
+            _activity: String(rawActivity),
+          },
+          relationships: this._defaultRelationships(parentEvent),
+        };
+        // Applica le regole E2O filtrate per il tipo del sub-evento.
+        // Il record di riferimento è quello padre (i sub-eventi condividono il contesto).
+        this._applyE2ORules(this._currentRecord, subEvent, objectsMap);
+
+        ocel.events.push(subEvent);
+      }
+    }
   }
 
   /** @private */
@@ -229,14 +402,68 @@ export class OcelMapper {
    * prima di Array.from(objectsMap.values()).
    * @private
    */
+  /** Restituisce l'idColumn dichiarato per un objectType, o null se assente. */
+  _idColumnFor(typeName) {
+    return this.config.objectTypes?.find((t) => t.name === typeName)?.idColumn ?? null;
+  }
+
+  /** Copia solo le relazioni "di default" (quelle con qualifier = nome del tipo
+   *  oggetto), escludendo quelle aggiunte dalle regole E2O custom.
+   *  Serve per dare al sub-evento un punto di partenza pulito senza ereditare
+   *  ciecamente le regole specifiche del tipo padre. */
+  _defaultRelationships(parentEvent) {
+    const defaultQualifiers = new Set((this.config.objectTypes || []).map((t) => t.name));
+    return parentEvent.relationships
+      .filter((r) => defaultQualifiers.has(r.qualifier))
+      .map((r) => ({ ...r }));
+  }
+
+  /** Applica le regole E2O filtrate per il tipo dell'evento corrente.
+   *  Una regola con eventType null/'*' si applica a tutti gli eventi;
+   *  una regola con eventType specifico si applica solo quando event.type matcha.
+   *  Gli oggetti referenziati vengono auto-registrati in objectsMap. */
+  _applyE2ORules(record, event, objectsMap) {
+    if (!this.config.e2oRules) return;
+    for (const rule of this.config.e2oRules) {
+      // filtro per tipo evento (null/'*' = applica a tutti)
+      if (rule.eventType && rule.eventType !== "*" && rule.eventType !== event.type)
+        continue;
+
+      const col = rule.column || this._idColumnFor(rule.objectType);
+      if (!col) continue; // tipo non riconosciuto
+      const objectId = record[col];
+      if (objectId === null || objectId === undefined || objectId === "")
+        continue;
+
+      const mapKey = `${rule.objectType}:${objectId}`;
+      if (!objectsMap.has(mapKey)) {
+        objectsMap.set(mapKey, {
+          id: String(objectId),
+          type: rule.objectType,
+          attributes: {},
+        });
+      }
+
+      event.relationships.push({
+        objectId: String(objectId),
+        qualifier: rule.qualifier,
+      });
+    }
+  }
+
   _buildO2O(records, objectsMap) {
     const seen = new Set();
     const result = [];
 
     for (const record of records) {
       for (const rule of this.config.o2oRules) {
-        const sourceId = record[rule.sourceColumn];
-        const targetId = record[rule.targetColumn];
+        // Schema nuovo: sourceColumn/targetColumn sono dedotti da idColumn dei tipi.
+        // Schema vecchio: se sourceColumn/targetColumn sono presenti, vengono usati.
+        const srcCol = rule.sourceColumn || this._idColumnFor(rule.sourceType);
+        const tgtCol = rule.targetColumn || this._idColumnFor(rule.targetType);
+        if (!srcCol || !tgtCol) continue;
+        const sourceId = record[srcCol];
+        const targetId = record[tgtCol];
 
         // Salta record con valori mancanti o con auto-relazione (stesso ID)
         if (!sourceId || !targetId || sourceId === targetId) continue;

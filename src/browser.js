@@ -39,6 +39,7 @@ export {
   sampleValues,
   columnChoices,
   NONE_SENTINEL,
+  UUID_SENTINEL,
 } from "./wizard-helpers.js";
 
 // Builder per il config

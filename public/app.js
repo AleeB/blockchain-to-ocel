@@ -13,6 +13,7 @@ import {
   downloadOcel,
   downloadConfig,
   NONE_SENTINEL,
+  UUID_SENTINEL,
 } from "../src/browser.js";
 
 /*
@@ -35,13 +36,21 @@ const S = {
 
   // Selezioni dell'utente accumulate passo per passo:
   eventIdCol: "",
-  activityCol: "",
+  // Colonne che fungono da activity. Stessa UX di objectCols: lista con un
+  // typeName opzionale per ognuna. Se typeName è vuoto, l'event.type sarà il
+  // valore della cella; se è valorizzato, l'event.type sarà il typeName e il
+  // valore della cella finisce in attributes._activity.
+  activityCols: [], // [{ col: string, typeName: string }]
   timestampCol: NONE_SENTINEL, //evitiamo un code smell
   objectCols: [], // [{ col: string, typeName: string }]
   objAttrs: {}, // { typeName: string[] }  — attributi per ogni tipo oggetto
   evAttrs: [], // colonne selezionate come attributi evento
   e2oRules: [], // [{ column, objectType, qualifier }]
   o2oRules: [], // [{ sourceType, sourceColumn, targetType, targetColumn, qualifier }]
+
+  // Sorgenti di eventi aggiuntive: ogni elemento di un array annidato
+  // produce un evento OCEL extra che eredita oggetti e tempo dal padre
+  extraSources: [], // [{ arrayPath, activityField, qualifier }]
 };
 
 // var che permette di capire dove siamo arrivati con il mapping (count Step)
@@ -71,11 +80,12 @@ window.goTo = function (step) {
 
   // Ogni step ha una funzione render* che popola il suo contenuto dinamico
   if (step === 1) renderNormalizeStep();
-  if (step === 2) renderCoreStep();
+  if (step === 2) renderEventsStep();
   if (step === 3) renderObjectsStep();
-  if (step === 4) renderAttrsStep();
-  if (step === 5) renderE2OStep();
-  if (step === 6) renderO2OStep();
+  if (step === 4) renderEventAttrsStep();
+  if (step === 5) renderObjectAttrsStep();
+  if (step === 6) renderE2OStep();
+  if (step === 7) renderO2OStep();
 };
 
 //#region STEP 0: UPLOAD JSON
@@ -141,6 +151,48 @@ function _processRecords(records, filename) {
   btnGoStep1.classList.remove("hidden");
 }
 
+/** Crea un mini-bottone "Seleziona/Deseleziona tutti" per una tag-grid.
+ *  Lo aggiunge sopra il `gridEl`, calcolando lo stato iniziale dai tag presenti.
+ *  Quando l'utente clicca, vengono triggerati anche i click sui singoli tag
+ *  per mantenere consistenti gli handler già collegati (sync di S, ecc.). */
+function _addToggleAllButton(gridEl, label = "Seleziona tutti") {
+  // Evita doppi inserimenti se la funzione viene richiamata sullo stesso grid
+  const existing = gridEl.previousElementSibling;
+  if (existing?.classList.contains("toggle-all-btn")) existing.remove();
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "toggle-all-btn";
+  btn.textContent = label;
+  btn.addEventListener("click", () => {
+    const tags = [...gridEl.querySelectorAll(".tag")];
+    if (!tags.length) return;
+    const allSelected = tags.every((t) => t.classList.contains("selected"));
+    // Se tutti sono già selezionati, deseleziona tutti; altrimenti seleziona tutti
+    tags.forEach((tag) => {
+      const isSelected = tag.classList.contains("selected");
+      if (allSelected && isSelected) tag.click();
+      else if (!allSelected && !isSelected) tag.click();
+    });
+  });
+
+  gridEl.parentNode.insertBefore(btn, gridEl);
+}
+
+/** Mostra/aggiorna/nasconde un loader generico (upload o mapping). */
+function _showLoader(prefix, text, ratio) {
+  const root = document.getElementById(`${prefix}Loader`);
+  if (!root) return;
+  root.classList.remove("hidden");
+  document.getElementById(`${prefix}LoaderText`).textContent = text;
+  const pct = Math.round((ratio || 0) * 100);
+  document.getElementById(`${prefix}LoaderPct`).textContent = `${pct}%`;
+  document.getElementById(`${prefix}LoaderFill`).style.width = `${pct}%`;
+}
+function _hideLoader(prefix) {
+  document.getElementById(`${prefix}Loader`)?.classList.add("hidden");
+}
+
 /** Gestisce il file scelto (da picker o drag & drop) */
 async function handleFile(file) {
   if (!file) return;
@@ -150,9 +202,16 @@ async function handleFile(file) {
   uploadStatus.classList.remove("hidden");
 
   try {
-    const records = await loadFromBrowserFile(file);
+    const records = await loadFromBrowserFile(file, {
+      onProgress: (p) => {
+        const label = p.phase === "parsing" ? "Parsing JSON…" : "Lettura file…";
+        _showLoader("upload", label, p.ratio);
+      },
+    });
+    _hideLoader("upload");
     _processRecords(records, file.name.replace(/\.[^.]+$/, ""));
   } catch (err) {
+    _hideLoader("upload");
     uploadStatus.className = "msg error";
     uploadStatus.textContent = `✗ ${err.message}`;
     btnGoStep1.classList.add("hidden");
@@ -190,13 +249,14 @@ window.resetAll = function () {
   S.config = null;
   S.filename = "output";
   S.eventIdCol = "";
-  S.activityCol = "";
+  S.activityCols = [];
   S.timestampCol = NONE_SENTINEL;
   S.objectCols = [];
   S.objAttrs = {};
   S.evAttrs = [];
   S.e2oRules = [];
   S.o2oRules = [];
+  S.extraSources = [];
 
   // Azzera gli input di upload
   fileInput.value = "";
@@ -251,6 +311,7 @@ function renderNormalizeStep() {
   });
 
   container.appendChild(grid);
+  _addToggleAllButton(grid, "Seleziona / Deseleziona tutti");
   S.selectedNested = [...S.nestedCols]; // tutte selezionate di default
 }
 
@@ -278,10 +339,12 @@ window.doNormalize = function () {
 
 //#endregion
 
-//#region STEP 2: Core Fields (campi chiave: EventID, Activity Column, TimeStamp Column)
+//#region STEP 2: Events (EventID + activity + timestamp + sorgenti aggiuntive)
 
-// step 2: popola le tre <select> con le colonne e prova a fare auto-guess
-function renderCoreStep() {
+// step 2: popola le tre <select> con le colonne e prova a fare auto-guess.
+// Mostra anche la sezione "sorgenti aggiuntive" per estrarre eventi extra
+// da array annidati (es. events[], internalTxs[]).
+function renderEventsStep() {
   /** genera le <option> HTML; addNone aggiunge "— nessuno —" in cima */
   const buildOptions = (addNone = false) => {
     let html = addNone
@@ -294,25 +357,21 @@ function renderCoreStep() {
     return html;
   };
 
-  document.getElementById("sel-eventId").innerHTML = buildOptions(false);
-  document.getElementById("sel-activity").innerHTML = buildOptions(false);
+  const evIdSel = document.getElementById("sel-eventId");
+  evIdSel.innerHTML = buildOptions(false);
   document.getElementById("sel-timestamp").innerHTML = buildOptions(true);
+
+  // Se in passaggi precedenti era stato attivato UUID, ripristina lo stato visuale
+  _applyUuidVisualState(S.eventIdCol === UUID_SENTINEL);
 
   // Auto-selezione: scorre le keywords in ordine e seleziona
   _autoGuess("sel-eventId", [
+    "eventid",
     "txhash",
     "transactionhash",
     "id",
     "hash",
     "txid",
-  ]);
-  _autoGuess("sel-activity", [
-    "functionname",
-    "activity",
-    "action",
-    "method",
-    "type",
-    "event",
   ]);
   _autoGuess("sel-timestamp", [
     "timestamp",
@@ -321,6 +380,83 @@ function renderCoreStep() {
     "createdat",
     "date",
   ]);
+
+  // Griglia di tag per scegliere le colonne activity (stesso pattern di Objects)
+  _renderActivityTagGrid();
+
+  // Sorgenti aggiuntive: array di oggetti annidati nei record raw
+  _renderExtraSourcesSection();
+}
+
+/** Griglia di tag per gli Event types: stessa UX di Objects.
+ *  L'utente seleziona N colonne; ognuna avrà un input per il typeName. */
+function _renderActivityTagGrid() {
+  const grid = document.getElementById("activityTagGrid");
+  if (!grid) return;
+  grid.innerHTML = "";
+
+  S.allCols.forEach((col) => {
+    const tag = document.createElement("div");
+    const isSel = S.activityCols.some((a) => a.col === col);
+    tag.className = "tag" + (isSel ? " selected" : "");
+    tag.dataset.col = col;
+    const sample = sampleValues(S.records, col)[0] || "";
+    tag.innerHTML = `${col} <span class="sample">${sample}</span>`;
+    tag.addEventListener("click", () => {
+      tag.classList.toggle("selected");
+      _syncActivityTypeRows();
+    });
+    grid.appendChild(tag);
+  });
+
+  // Auto-detect: se non c'è nessuna selezione, pre-seleziona la prima colonna
+  // che assomiglia a un campo activity
+  if (!S.activityCols.length) {
+    const lower = S.allCols.map((c) => c.toLowerCase());
+    const candidates = ["functionname", "activity", "action", "method", "type", "event"];
+    for (const kw of candidates) {
+      const idx = lower.findIndex((c) => c.includes(kw));
+      if (idx !== -1) {
+        const tag = grid.querySelector(`.tag[data-col="${S.allCols[idx]}"]`);
+        if (tag) tag.classList.add("selected");
+        break;
+      }
+    }
+  }
+  _addToggleAllButton(grid, "Seleziona / Deseleziona tutti");
+  _syncActivityTypeRows();
+}
+
+/** Allinea le righe di typeName ai tag attualmente selezionati. */
+function _syncActivityTypeRows() {
+  const selected = [
+    ...document.querySelectorAll("#activityTagGrid .tag.selected"),
+  ].map((t) => t.dataset.col);
+  const rows = document.getElementById("activityTypeRows");
+  rows.innerHTML = "";
+
+  // Preserva i typeName già inseriti per le colonne che restano selezionate
+  S.activityCols = selected.map((col) => {
+    const prev = S.activityCols.find((a) => a.col === col);
+    return { col, typeName: prev?.typeName ?? "" };
+  });
+
+  S.activityCols.forEach((ac, idx) => {
+    const row = document.createElement("div");
+    row.className = "grid-2";
+    row.style.alignItems = "center";
+    row.innerHTML = `
+      <div style="font-size:12px; color:var(--muted)">
+        Type name per <strong style="color:var(--text)">${ac.col}</strong>
+        <div style="font-size:10px; opacity:0.7">vuoto = usa il valore della cella</div>
+      </div>
+      <input type="text" value="${ac.typeName}" placeholder="(valore della cella)" />
+    `;
+    row.querySelector("input").addEventListener("input", (e) => {
+      S.activityCols[idx].typeName = e.target.value.trim();
+    });
+    rows.appendChild(row);
+  });
 }
 
 // cerca la prima keyword nella lista delle colonne e pre-seleziona quella
@@ -335,6 +471,215 @@ function _autoGuess(selectId, keywords) {
       return;
     }
   }
+}
+
+/** Attiva/disattiva la modalità "UUID random" per l'Event ID.
+ *  Quando attiva, il select viene disabilitato e S.eventIdCol = UUID_SENTINEL.
+ *  Il bottone alterna stato visivo (acceso/spento) per dare feedback chiaro. */
+window.toggleUuidId = function () {
+  const wasOn = S.eventIdCol === UUID_SENTINEL;
+  S.eventIdCol = wasOn ? "" : UUID_SENTINEL;
+  _applyUuidVisualState(!wasOn);
+};
+
+function _applyUuidVisualState(on) {
+  const sel = document.getElementById("sel-eventId");
+  const btn = document.getElementById("btnUuid");
+  if (!sel || !btn) return;
+  sel.disabled = on;
+  sel.style.opacity = on ? "0.4" : "1";
+  if (on) {
+    btn.classList.remove("btn-secondary");
+    btn.classList.add("btn-success");
+    btn.textContent = "🎲 UUID attivo";
+  } else {
+    btn.classList.add("btn-secondary");
+    btn.classList.remove("btn-success");
+    btn.textContent = "🎲 UUID";
+  }
+}
+
+/** Mostra i tag delle colonne RAW che sono array di oggetti, oltre alle
+ *  righe di configurazione per quelle attualmente selezionate. */
+function _renderExtraSourcesSection() {
+  const grid = document.getElementById("extraSourcesGrid");
+  const rows = document.getElementById("extraSourcesRows");
+  if (!grid || !rows) return;
+  grid.innerHTML = "";
+
+  // Trova le colonne top-level dei record raw che sono array di oggetti.
+  // Sono le uniche utilizzabili come sorgenti aggiuntive (un elemento = un evento).
+  const sample = S.raw[0] || {};
+  const candidates = Object.keys(sample).filter((k) => {
+    const v = sample[k];
+    return Array.isArray(v) && v.length > 0 && typeof v[0] === "object" && v[0] !== null;
+  });
+
+  if (!candidates.length) {
+    grid.innerHTML =
+      '<p style="color:var(--muted); font-size:12px">Nessun array di oggetti rilevato nei record sorgente.</p>';
+    rows.innerHTML = "";
+    return;
+  }
+
+  candidates.forEach((path) => {
+    const tag = document.createElement("div");
+    const isSel = S.extraSources.some((s) => s.arrayPath === path);
+    tag.className = "tag" + (isSel ? " selected" : "");
+    tag.dataset.path = path;
+    tag.innerHTML = `${path}[] <span class="sample">array</span>`;
+    tag.addEventListener("click", () => {
+      tag.classList.toggle("selected");
+      _syncExtraSourceRows();
+    });
+    grid.appendChild(tag);
+  });
+
+  _addToggleAllButton(grid, "Seleziona / Deseleziona tutti");
+  _syncExtraSourceRows();
+}
+
+/** Calcola i valori distinti di un campo dentro un array path,
+ *  attraverso tutti i record raw. Cappa il numero per evitare grid enormi. */
+function _distinctValuesInArray(arrayPath, fieldName, cap = 200) {
+  const out = new Set();
+  for (const r of S.raw) {
+    const arr = r[arrayPath];
+    if (!Array.isArray(arr)) continue;
+    for (const item of arr) {
+      const v = item?.[fieldName];
+      if (v !== null && v !== undefined && v !== "") out.add(String(v));
+      if (out.size >= cap) break;
+    }
+    if (out.size >= cap) break;
+  }
+  return [...out].sort();
+}
+
+/** Allinea S.extraSources e le righe di config in base ai tag selezionati. */
+function _syncExtraSourceRows() {
+  const selected = [
+    ...document.querySelectorAll("#extraSourcesGrid .tag.selected"),
+  ].map((t) => t.dataset.path);
+
+  // Aggiorna S.extraSources preservando i valori già inseriti
+  S.extraSources = selected.map((path) => {
+    const prev = S.extraSources.find((s) => s.arrayPath === path);
+    const sampleItem = S.raw[0]?.[path]?.[0] || {};
+    const itemKeys = Object.keys(sampleItem);
+    return {
+      arrayPath: path,
+      activityField: prev?.activityField || itemKeys[0] || "",
+      qualifier: prev?.qualifier || path,
+      // includeTypes vuoto = nessun filtro (include tutti i tipi distinti)
+      includeTypes: prev?.includeTypes ? [...prev.includeTypes] : [],
+    };
+  });
+
+  const rows = document.getElementById("extraSourcesRows");
+  rows.innerHTML = "";
+
+  S.extraSources.forEach((src, idx) => {
+    const sampleItem = S.raw[0]?.[src.arrayPath]?.[0] || {};
+    const fieldOptions = Object.keys(sampleItem)
+      .map(
+        (k) =>
+          `<option value="${k}" ${k === src.activityField ? "selected" : ""}>${k}</option>`,
+      )
+      .join("");
+
+    const card = document.createElement("div");
+    card.style.padding = "12px";
+    card.style.background = "var(--bg)";
+    card.style.border = "1px solid var(--border)";
+    card.style.borderRadius = "8px";
+    card.style.marginBottom = "10px";
+    card.dataset.srcIdx = idx;
+
+    // Riga di configurazione (campo activity + qualifier)
+    card.innerHTML = `
+      <div style="display:grid; grid-template-columns: auto 1fr 1fr 1fr; gap:8px; align-items:end">
+        <div style="font-size:12px; padding:6px 10px; background:var(--surface); border-radius:4px">
+          <strong>${src.arrayPath}</strong>[]
+        </div>
+        <div>
+          <label>Campo activity</label>
+          <select data-key="activityField">${fieldOptions}</select>
+        </div>
+        <div>
+          <label>Qualifier sorgente</label>
+          <input type="text" data-key="qualifier" value="${src.qualifier}" placeholder="es. emitted_event" />
+        </div>
+        <div style="font-size:11px; color:var(--muted)">
+          ${(S.raw[0]?.[src.arrayPath] || []).length} elementi nel primo record
+        </div>
+      </div>
+      <div style="margin-top:10px">
+        <label>Tipi evento da includere</label>
+        <div class="card-desc" style="margin:0 0 6px; font-size:11px">
+          Lascia tutti selezionati per includere ogni tipo, oppure scegli solo
+          quelli che ti interessano. I tipi sono i valori distinti del
+          <code>campo activity</code> qui sopra.
+        </div>
+        <div class="tag-grid" data-key="includeTypes"></div>
+      </div>
+    `;
+
+    // Bind input handlers
+    card.querySelectorAll("[data-key]").forEach((el) => {
+      if (el.dataset.key === "includeTypes") return; // gestito sotto
+      const sync = (e) => {
+        S.extraSources[idx][e.target.dataset.key] = e.target.value.trim();
+        // Se cambia il campo activity, ricalcola la sub-grid dei tipi
+        if (e.target.dataset.key === "activityField") {
+          S.extraSources[idx].includeTypes = []; // reset filtro
+          _renderIncludeTypesGrid(card, idx);
+        }
+      };
+      el.addEventListener("input", sync);
+      el.addEventListener("change", sync);
+    });
+
+    rows.appendChild(card);
+    _renderIncludeTypesGrid(card, idx);
+  });
+}
+
+/** Disegna la sub-grid dei tipi evento distinti per una sorgente.
+ *  Tutti i tag sono selezionati di default; includeTypes vuoto = include tutto.
+ *  Quando l'utente deseleziona qualcosa, includeTypes contiene la lista
+ *  esplicita dei tipi ammessi. */
+function _renderIncludeTypesGrid(card, idx) {
+  const src = S.extraSources[idx];
+  const grid = card.querySelector('[data-key="includeTypes"]');
+  grid.innerHTML = "";
+  const types = _distinctValuesInArray(src.arrayPath, src.activityField);
+  if (!types.length) {
+    grid.innerHTML =
+      '<p style="color:var(--muted); font-size:12px">Nessun valore trovato per questo campo.</p>';
+    return;
+  }
+  // Se includeTypes è vuoto significa "tutti": pre-seleziona tutti i tag
+  const includeAll = !src.includeTypes || src.includeTypes.length === 0;
+  types.forEach((t) => {
+    const tag = document.createElement("div");
+    const isSel = includeAll || src.includeTypes.includes(t);
+    tag.className = "tag" + (isSel ? " selected" : "");
+    tag.dataset.type = t;
+    tag.textContent = t;
+    tag.addEventListener("click", () => {
+      tag.classList.toggle("selected");
+      const allSelected = [...grid.querySelectorAll(".tag.selected")].map(
+        (x) => x.dataset.type,
+      );
+      // Se TUTTI selezionati → memorizza [] (= nessun filtro = include tutti)
+      // Altrimenti memorizza la lista esplicita dei tipi da includere
+      S.extraSources[idx].includeTypes =
+        allSelected.length === types.length ? [] : allSelected;
+    });
+    grid.appendChild(tag);
+  });
+  _addToggleAllButton(grid, "Seleziona / Deseleziona tutti");
 }
 
 //#endregion
@@ -366,6 +711,7 @@ function renderObjectsStep() {
     tagGrid.appendChild(tag);
   });
 
+  _addToggleAllButton(tagGrid, "Seleziona / Deseleziona tutti");
   // Ripristina le righe dei nomi tipo se ci sono selezioni precedenti
   if (S.objectCols.length) _syncObjectTypeRows();
 }
@@ -409,23 +755,49 @@ function _syncObjectTypeRows() {
 
 //#endregion
 
-//#region STEP 4: Attributi (inserimento attributi a oggetti o eventi)
+//#region STEP 4 & 5: Attributi (eventi e oggetti in step separati)
 
-// step 4: attributi per ogni tipo oggetto + attributi evento
-// esclude le colonne già usate nei passi precedenti
-function renderAttrsStep() {
-  // Colonne occupate dai campi core e dagli ID oggetto
-  const coreUsed = new Set([
+/** Calcola le colonne libere (non assegnate a ruoli core né a oggetti). */
+function _remainingColumns() {
+  const used = new Set([
     document.getElementById("sel-eventId").value,
-    document.getElementById("sel-activity").value,
     document.getElementById("sel-timestamp").value,
+    ...S.activityCols.map((a) => a.col),
     ...S.objectCols.map((o) => o.col),
   ]);
-  const remaining = S.allCols.filter((c) => !coreUsed.has(c));
+  return S.allCols.filter((c) => !used.has(c));
+}
 
-  // Griglia attributi per ogni tipo oggetto
+// step 4: griglia di tag per gli attributi DELL'EVENTO
+// (campi che variano da una transazione all'altra)
+function renderEventAttrsStep() {
+  const evGrid = document.getElementById("evAttrGrid");
+  evGrid.innerHTML = "";
+  const remaining = _remainingColumns();
+
+  remaining.forEach((col) => {
+    const tag = document.createElement("div");
+    tag.className = "tag" + (S.evAttrs.includes(col) ? " selected" : "");
+    tag.dataset.col = col;
+    tag.textContent = col;
+    tag.addEventListener("click", () => {
+      tag.classList.toggle("selected");
+      S.evAttrs = [...evGrid.querySelectorAll(".tag.selected")].map(
+        (t) => t.dataset.col,
+      );
+    });
+    evGrid.appendChild(tag);
+  });
+}
+
+// step 5: per ogni tipo oggetto, griglia di tag per i suoi attributi
+// (campi che restano costanti per quella istanza)
+function renderObjectAttrsStep() {
   const objRows = document.getElementById("objAttrRows");
   objRows.innerHTML = "";
+
+  // Esclude le colonne già usate come attributi evento per evitare doppioni
+  const remaining = _remainingColumns().filter((c) => !S.evAttrs.includes(c));
 
   S.objectCols.forEach((obj) => {
     const prevAttrs = S.objAttrs[obj.typeName] || [];
@@ -444,7 +816,6 @@ function renderAttrsStep() {
       tag.textContent = col;
       tag.addEventListener("click", () => {
         tag.classList.toggle("selected");
-
         S.objAttrs[obj.typeName] = [
           ...tagGrid.querySelectorAll(".tag.selected"),
         ].map((t) => t.dataset.col);
@@ -456,26 +827,10 @@ function renderAttrsStep() {
     S.objAttrs[obj.typeName] = prevAttrs;
   });
 
-  // Griglia attributi evento (esclude le colonne già usate come attributi oggetto)
-  const evGrid = document.getElementById("evAttrGrid");
-  evGrid.innerHTML = "";
-  const allObjAttrs = new Set(Object.values(S.objAttrs).flat());
-
-  remaining
-    .filter((c) => !allObjAttrs.has(c))
-    .forEach((col) => {
-      const tag = document.createElement("div");
-      tag.className = "tag" + (S.evAttrs.includes(col) ? " selected" : "");
-      tag.dataset.col = col;
-      tag.textContent = col;
-      tag.addEventListener("click", () => {
-        tag.classList.toggle("selected");
-        S.evAttrs = [...evGrid.querySelectorAll(".tag.selected")].map(
-          (t) => t.dataset.col,
-        );
-      });
-      evGrid.appendChild(tag);
-    });
+  if (!S.objectCols.length) {
+    objRows.innerHTML =
+      '<p style="color:var(--muted); font-size:13px">Nessun tipo oggetto selezionato allo step precedente.</p>';
+  }
 }
 
 //#endregion
@@ -493,19 +848,69 @@ function renderE2OStep() {
   }
 }
 
-/** aggiunge una riga E2O (colonna + tipo + qualifier + tasto rimuovi) */
+/** Raccoglie tutti i tipi evento utilizzabili come filtro nelle regole E2O.
+ *  Il formato segue quello prodotto dal mapper: "colonna:valore" oppure
+ *  "arrayPath.field:valore", così l'utente vede chiaramente da dove
+ *  arriva l'evento e si evitano collisioni di nome. */
+function _collectEventTypes() {
+  const out = new Set();
+  // Tipi dalle activity columns dello step 2
+  (S.activityCols || []).forEach((ac) => {
+    if (ac.typeName) {
+      out.add(ac.typeName); // l'utente ha scelto un nome esplicito
+    } else {
+      // typeName vuoto -> "colonna:valore" per ogni valore distinto
+      for (const r of S.records) {
+        const v = r[ac.col];
+        if (v !== null && v !== undefined && v !== "")
+          out.add(`${ac.col}:${String(v)}`);
+        if (out.size > 50) break;
+      }
+    }
+  });
+  // Tipi dalle sorgenti aggiuntive (eventi annidati)
+  (S.extraSources || []).forEach((src) => {
+    const prefix = src.activityField
+      ? `${src.arrayPath}.${src.activityField}`
+      : src.arrayPath;
+    if (src.activityField) {
+      for (const r of S.raw) {
+        const arr = r[src.arrayPath];
+        if (!Array.isArray(arr)) continue;
+        for (const item of arr) {
+          const v = item?.[src.activityField];
+          if (v !== null && v !== undefined && v !== "")
+            out.add(`${prefix}:${String(v)}`);
+          if (out.size > 200) break;
+        }
+        if (out.size > 200) break;
+      }
+    } else if (src.qualifier) {
+      out.add(`${prefix}:${src.qualifier}`);
+    }
+  });
+  return [...out].sort();
+}
+
+/** aggiunge una riga E2O (event type + object type + qualifier + tasto rimuovi).
+ *  La colonna sorgente viene dedotta dall'idColumn del tipo oggetto al momento
+ *  del mapping. L'event type "*" applica la regola a tutti gli eventi. */
 window.addE2ORow = function (preset = {}) {
   const list = document.getElementById("e2oList");
   const row = document.createElement("div");
   row.className = "rule-row e2o";
 
-  const colOptions = S.allCols
-    .map(
-      (c) =>
-        `<option value="${c}" ${c === preset.column ? "selected" : ""}>${c}</option>`,
-    )
-    .join("");
-  const typeOptions = S.objectCols
+  const evTypes = _collectEventTypes();
+  const evOptions =
+    `<option value="*" ${!preset.eventType || preset.eventType === "*" ? "selected" : ""}>* (tutti)</option>` +
+    evTypes
+      .map(
+        (t) =>
+          `<option value="${t}" ${t === preset.eventType ? "selected" : ""}>${t}</option>`,
+      )
+      .join("");
+
+  const objOptions = S.objectCols
     .map(
       (o) =>
         `<option value="${o.typeName}" ${o.typeName === preset.objectType ? "selected" : ""}>${o.typeName}</option>`,
@@ -513,15 +918,14 @@ window.addE2ORow = function (preset = {}) {
     .join("");
 
   row.innerHTML = `
-    <div><label>Colonna</label><select>${colOptions}</select></div>
-    <div><label>Tipo oggetto</label><select>${typeOptions}</select></div>
+    <div><label>Event type</label><select data-key="eventType">${evOptions}</select></div>
+    <div><label>Object type</label><select data-key="objectType">${objOptions}</select></div>
     <div><label>Qualifier</label>
       <input type="text" value="${preset.qualifier || ""}" placeholder="es. initiator" />
     </div>
     <button class="btn-rm" onclick="this.closest('.rule-row').remove(); _syncE2O()">✕</button>
   `;
 
-  // Aggiorna S.e2oRules
   row.querySelectorAll("select, input").forEach((el) => {
     el.addEventListener("change", _syncE2O);
     el.addEventListener("input", _syncE2O);
@@ -535,13 +939,17 @@ window.addE2ORow = function (preset = {}) {
 function _syncE2O() {
   S.e2oRules = [...document.querySelectorAll("#e2oList .rule-row")]
     .map((row) => {
-      const [col, type] = [...row.querySelectorAll("select")].map(
-        (s) => s.value,
-      );
+      const ev = row.querySelector('[data-key="eventType"]').value;
+      const ot = row.querySelector('[data-key="objectType"]').value;
       const qual = row.querySelector("input").value.trim();
-      return { column: col, objectType: type, qualifier: qual };
+      // eventType "*" o vuoto -> null = applica a tutti i tipi evento
+      return {
+        eventType: ev && ev !== "*" ? ev : null,
+        objectType: ot,
+        qualifier: qual,
+      };
     })
-    .filter((r) => r.qualifier);
+    .filter((r) => r.qualifier && r.objectType);
 }
 
 // Esposta su window per essere chiamata dagli onclick delle righe
@@ -558,36 +966,43 @@ function renderO2OStep() {
   S.o2oRules.forEach((r) => addO2ORow(r));
 }
 
-/** aggiunge una riga O2O (src type + src col + dst type + dst col + qualifier) */
+/** aggiunge una riga O2O (src type + dst type + qualifier).
+ *  Le colonne sorgente/target vengono dedotte dagli idColumn dei tipi al
+ *  momento del mapping, quindi non sono più chieste nella UI. */
 window.addO2ORow = function (preset = {}) {
   const list = document.getElementById("o2oList");
   const row = document.createElement("div");
   row.className = "rule-row o2o";
 
-  const colOptions = S.allCols
-    .map((c) => `<option value="${c}">${c}</option>`)
-    .join("");
   const typeOptions = S.objectCols
     .map((o) => `<option value="${o.typeName}">${o.typeName}</option>`)
     .join("");
 
   row.innerHTML = `
-    <div><label>Tipo src</label><select>${typeOptions}</select></div>
-    <div><label>Col src</label><select>${colOptions}</select></div>
-    <div><label>Tipo dst</label><select>${typeOptions}</select></div>
-    <div><label>Col dst</label><select>${colOptions}</select></div>
+    <div><label>Obj Type src</label><select>${typeOptions}</select></div>
+    <div><label>Obj Type dst</label><select>${typeOptions}</select></div>
     <div><label>Qualifier</label>
       <input type="text" value="${preset.qualifier || ""}" placeholder="es. interacts_with" />
     </div>
     <button class="btn-rm" onclick="this.closest('.rule-row').remove(); _syncO2O()">✕</button>
   `;
 
-  // Pre-seleziona i valori del preset
+  // Pre-seleziona i valori del preset; se assenti, scegli sorgente e target
+  // DIVERSI di default (primo e secondo tipo). Così l'utente che digita solo
+  // il qualifier non finisce con src === dst (il mapper salterebbe la regola).
   const selects = row.querySelectorAll("select");
-  if (preset.sourceType) selects[0].value = preset.sourceType;
-  if (preset.sourceColumn) selects[1].value = preset.sourceColumn;
-  if (preset.targetType) selects[2].value = preset.targetType;
-  if (preset.targetColumn) selects[3].value = preset.targetColumn;
+  if (preset.sourceType) {
+    selects[0].value = preset.sourceType;
+  } else if (S.objectCols[0]) {
+    selects[0].value = S.objectCols[0].typeName;
+  }
+  if (preset.targetType) {
+    selects[1].value = preset.targetType;
+  } else if (S.objectCols[1]) {
+    selects[1].value = S.objectCols[1].typeName;
+  } else if (S.objectCols[0]) {
+    selects[1].value = S.objectCols[0].typeName;
+  }
 
   row.querySelectorAll("select, input").forEach((el) => {
     el.addEventListener("change", _syncO2O);
@@ -602,19 +1017,17 @@ window.addO2ORow = function (preset = {}) {
 function _syncO2O() {
   S.o2oRules = [...document.querySelectorAll("#o2oList .rule-row")]
     .map((row) => {
-      const [srcType, srcCol, tgtType, tgtCol] = [
-        ...row.querySelectorAll("select"),
-      ].map((s) => s.value);
+      const [srcType, tgtType] = [...row.querySelectorAll("select")].map(
+        (s) => s.value,
+      );
       const qual = row.querySelector("input").value.trim();
       return {
         sourceType: srcType,
-        sourceColumn: srcCol,
         targetType: tgtType,
-        targetColumn: tgtCol,
         qualifier: qual,
       };
     })
-    .filter((r) => r.qualifier);
+    .filter((r) => r.qualifier && r.sourceType && r.targetType);
 }
 
 window._syncO2O = _syncO2O;
@@ -623,26 +1036,32 @@ window._syncO2O = _syncO2O;
 
 //#region ESECUZIONE DEL MAPPING
 
-// step finale: costruisce il config, esegue il mapping, va allo step 7
-window.runMapping = function () {
+// step finale: costruisce il config, esegue il mapping, va allo step 8
+window.runMapping = async function () {
   // Sincronizza le regole E2O e O2O prima di leggere S
   _syncE2O();
   _syncO2O();
 
-  // Legge le selezioni core dai <select> dello step 2
-  S.eventIdCol = document.getElementById("sel-eventId").value;
-  S.activityCol = document.getElementById("sel-activity").value;
+  // Event ID: se UUID è attivo, ignoriamo il valore del select e usiamo la sentinella
+  if (S.eventIdCol !== UUID_SENTINEL) {
+    S.eventIdCol = document.getElementById("sel-eventId").value;
+  }
   S.timestampCol = document.getElementById("sel-timestamp").value;
+  // activityCols viene aggiornato in tempo reale dai listener sui tag/input
 
-  // Legge gli attributi oggetto dai tag selezionati dello step 4
+  // Legge gli attributi oggetto dai tag selezionati dello step 5
   document.querySelectorAll("#objAttrRows [data-type]").forEach((grid) => {
     S.objAttrs[grid.dataset.type] = [
       ...grid.querySelectorAll(".tag.selected"),
     ].map((t) => t.dataset.col);
   });
-  S.evAttrs = [...document.querySelectorAll("#evAttrGrid .tag.selected")].map(
-    (t) => t.dataset.col,
-  );
+  // Step 4 - attributi evento (UI separata da quella oggetti)
+  const evGrid = document.getElementById("evAttrGrid");
+  if (evGrid) {
+    S.evAttrs = [...evGrid.querySelectorAll(".tag.selected")].map(
+      (t) => t.dataset.col,
+    );
+  }
 
   // Costruisce objectTypes combinando col, typeName e attributi
   const objectTypes = S.objectCols.map((o) => ({
@@ -651,24 +1070,54 @@ window.runMapping = function () {
     attributes: S.objAttrs[o.typeName] || [],
   }));
 
-  // Assembla il MappingConfig
+  // Assembla il MappingConfig.
+  // Per compat con il mapper attuale, se c'è una sola activity column la passa
+  // come activityColumn; altrimenti popola activitySources (multi-tipo)
+  const cfgActivityColumn = S.activityCols[0]?.col || "";
+  const activitySources = S.activityCols.map((a) => ({
+    column: a.col,
+    typeName: a.typeName || null, // null = usa il valore della cella
+  }));
+
   S.config = buildConfig({
     eventIdColumn: S.eventIdCol,
-    activityColumn: S.activityCol,
+    activityColumn: cfgActivityColumn,
     timestampColumn: S.timestampCol,
     columnsToNormalize: S.selectedNested,
     objectTypes,
     eventAttributes: S.evAttrs,
     e2oRules: S.e2oRules,
     o2oRules: S.o2oRules,
+    additionalEventSources: S.extraSources,
+    activitySources,
   });
 
+  const btn = document.getElementById("btnRunMapping");
+  btn?.setAttribute("disabled", "true");
+  _showLoader("mapping", "Avvio mapping…", 0);
   try {
-    S.ocel = new OcelMapper(S.config).map(S.records);
-    goTo(7);
+    // Passa anche S.raw: serve al mapper per accedere agli array originali
+    // (necessario per generare gli eventi dalle additionalEventSources).
+    // Usiamo mapAsync così la UI può aggiornare la barra di progresso e
+    // restare reattiva anche su dataset grandi (decine di migliaia di record).
+    S.ocel = await new OcelMapper(S.config).mapAsync(S.records, S.raw, {
+      progressEvery: 250,
+      onProgress: (p) => {
+        const label =
+          p.phase === "done"
+            ? "Mapping completato"
+            : `Eventi processati: ${p.processed.toLocaleString()} / ${p.total.toLocaleString()}`;
+        _showLoader("mapping", label, p.ratio);
+      },
+    });
+    _hideLoader("mapping");
+    goTo(8);
     _renderResult();
   } catch (err) {
+    _hideLoader("mapping");
     alert(`Errore durante il mapping: ${err.message}`);
+  } finally {
+    btn?.removeAttribute("disabled");
   }
 };
 
