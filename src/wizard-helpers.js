@@ -6,6 +6,10 @@
 // sentinella per "nessun timestamp scelto" — il mapper la interpreta come null
 export const NONE_SENTINEL = "__none__";
 
+// sentinella per "genera UUID v4 random" come Event ID
+// il mapper la interpreta come "non leggere da colonna, genera ID al volo"
+export const UUID_SENTINEL = "__uuid__";
+
 /**
  * Restituisce fino a n valori di esempio non vuoti per una colonna,
  * troncati a 60 caratteri. Utile per mostrare all'utente cosa c'è dentro.
@@ -45,6 +49,8 @@ export function buildConfig({
   eventAttributes,
   e2oRules,
   o2oRules,
+  additionalEventSources,
+  activitySources,
 }) {
   return {
     activityColumn,
@@ -55,6 +61,10 @@ export function buildConfig({
     eventAttributes,
     e2oRules,
     o2oRules,
+    additionalEventSources: additionalEventSources ?? [],
+    // Multi-source di activity: ogni elemento produce un evento OCEL per record.
+    // Se vuoto o di lunghezza 1, il mapper usa il vecchio activityColumn.
+    activitySources: activitySources ?? [],
   };
 }
 

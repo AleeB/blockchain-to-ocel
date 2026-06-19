@@ -1,9 +1,14 @@
 /**
  * exporter.browser.js - Fa scaricare file al browser
  *
- * Usa le API del browser (Blob, URL.createObjectURL)
- * Non valida, non serializza: si aspetta che i dati siano già pronti
+ * Usa le API del browser (Blob, URL.createObjectURL).
+ * La serializzazione dell'OCEL è delegata al modulo serializer.js, condiviso
+ * con l'esportatore Node.js: così un eventuale nuovo formato di output
+ * (XML, SQLite, …) si aggiunge in un solo punto e diventa disponibile in
+ * entrambi gli ambienti senza duplicazione di codice.
  */
+
+import { serializeOcel } from "./serializer.js";
 
 /**
  * Fa scaricare il log OCEL come file .jsonocel
@@ -15,7 +20,7 @@
  */
 export function downloadOcel(ocel, filename = "output.jsonocel", options = {}) {
   const { pretty = true } = options;
-  const json = pretty ? JSON.stringify(ocel, null, 2) : JSON.stringify(ocel);
+  const json = serializeOcel(ocel, { pretty });
   _triggerDownload(json, filename, "application/json");
 }
 
@@ -51,6 +56,8 @@ function _triggerDownload(content, filename, mimeType) {
   anchor.download = filename;
   anchor.click();
 
-  // Libera la memoria del link temporaneo
-  URL.revokeObjectURL(url);
+  // Libera la memoria del link temporaneo. Defer al prossimo task della event
+  // loop: alcuni browser non hanno ancora avviato il download nel momento in cui
+  // anchor.click() ritorna, e revocare la URL troppo presto può abortirlo.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

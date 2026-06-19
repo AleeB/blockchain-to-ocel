@@ -14,23 +14,44 @@ export { parseJsonOrJsonl };
  * e restituisce i dati come array di oggetti.
  *
  * @param {File} file Il file scelto dall'utente
+ * @param {object} [opts]
+ * @param {(p: {phase: string, loaded: number, total: number, ratio: number}) => void} [opts.onProgress]
+ *   Callback opzionale chiamata durante la lettura per aggiornare un loader UI.
+ *   phase ∈ "reading" | "parsing" | "done".
  * @returns {Promise<object[]>} Dati del file come array
  * @throws {Error} Se il file non puo' essere letto o non contiene JSON/JSONL valido
  */
-export function loadFromBrowserFile(file) {
+export function loadFromBrowserFile(file, opts = {}) {
+  const { onProgress } = opts;
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
+    const total = file.size || 0;
 
-    // Lettura completata: prova a interpretare il testo come JSON
+    // FileReader.onprogress arriva mano a mano che il browser legge
+    reader.onprogress = (e) => {
+      if (!onProgress) return;
+      const loaded = e.loaded || 0;
+      const t = e.total || total;
+      onProgress({
+        phase: "reading",
+        loaded,
+        total: t,
+        ratio: t > 0 ? loaded / t : 0,
+      });
+    };
+
     reader.onload = (e) => {
+      // Lettura completata: il parsing è sincrono, segnaliamo come "parsing"
+      onProgress?.({ phase: "parsing", loaded: total, total, ratio: 1 });
       try {
-        resolve(parseJsonOrJsonl(e.target.result));
+        const data = parseJsonOrJsonl(e.target.result);
+        onProgress?.({ phase: "done", loaded: total, total, ratio: 1 });
+        resolve(data);
       } catch (err) {
         reject(new Error(`Impossibile parsare "${file.name}": ${err.message}`));
       }
     };
 
-    // Errore di lettura
     reader.onerror = () => {
       reject(new Error(`Impossibile leggere il file: ${file.name}`));
     };

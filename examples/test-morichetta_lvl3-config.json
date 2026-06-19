@@ -1,0 +1,48 @@
+{
+  "activityColumn": "functionName",
+  "timestampColumn": "timestamp.$date",
+  "eventIdColumn": "__uuid__",
+  "columnsToNormalize": [
+    "_id",
+    "timestamp"
+  ],
+  "objectTypes": [
+    {
+      "name": "contractaddress",
+      "idColumn": "contractAddress",
+      "attributes": []
+    },
+    {
+      "name": "sender",
+      "idColumn": "sender",
+      "attributes": []
+    }
+  ],
+  "eventAttributes": [
+    "gasUsed",
+    "blockNumber",
+    "value"
+  ],
+  "e2oRules": [],
+  "o2oRules": [],
+  "additionalEventSources": [
+    {
+      "arrayPath": "internalTxs",
+      "activityField": "activity",
+      "qualifier": "internalTxs",
+      "includeTypes": []
+    },
+    {
+      "arrayPath": "events",
+      "activityField": "eventFrom",
+      "qualifier": "events",
+      "includeTypes": []
+    }
+  ],
+  "activitySources": [
+    {
+      "column": "functionName",
+      "typeName": null
+    }
+  ]
+}

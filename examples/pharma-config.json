@@ -1,0 +1,86 @@
+{
+  "activityColumn": "activity",
+  "timestampColumn": "timestamp.$date",
+  "eventIdColumn": "eventId",
+  "columnsToNormalize": [
+    "timestamp"
+  ],
+  "objectTypes": [
+    {
+      "name": "order",
+      "idColumn": "orderId",
+      "attributes": [
+        "quantity",
+        "urgency",
+        "shipment"
+      ]
+    },
+    {
+      "name": "hospital",
+      "idColumn": "hospitalId",
+      "attributes": [
+        "hospitalName"
+      ]
+    },
+    {
+      "name": "supplier",
+      "idColumn": "supplierId",
+      "attributes": [
+        "supplierName"
+      ]
+    },
+    {
+      "name": "carrier",
+      "idColumn": "carrierId",
+      "attributes": [
+        "carrierName"
+      ]
+    }
+  ],
+  "eventAttributes": [],
+  "e2oRules": [
+    {
+      "column": "orderId",
+      "objectType": "order",
+      "qualifier": "order"
+    },
+    {
+      "column": "hospitalId",
+      "objectType": "hospital",
+      "qualifier": "origin"
+    },
+    {
+      "column": "supplierId",
+      "objectType": "supplier",
+      "qualifier": "supply"
+    },
+    {
+      "column": "carrierId",
+      "objectType": "carrier",
+      "qualifier": "transportation"
+    }
+  ],
+  "o2oRules": [
+    {
+      "sourceType": "hospital",
+      "sourceColumn": "hospitalId",
+      "targetType": "order",
+      "targetColumn": "orderId",
+      "qualifier": "placed"
+    },
+    {
+      "sourceType": "order",
+      "sourceColumn": "orderId",
+      "targetType": "supplier",
+      "targetColumn": "supplierId",
+      "qualifier": "had"
+    },
+    {
+      "sourceType": "carrier",
+      "sourceColumn": "carrierId",
+      "targetType": "order",
+      "targetColumn": "orderId",
+      "qualifier": "carried"
+    }
+  ]
+}

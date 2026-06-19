@@ -235,7 +235,7 @@
         grid-template-columns: 2fr 2fr 2fr auto;
       }
       .rule-row.o2o {
-        grid-template-columns: 2fr 2fr 2fr 2fr 2fr auto;
+        grid-template-columns: 2fr 2fr 2fr auto;
       }
       .rule-row select,
       .rule-row input {
@@ -419,6 +419,58 @@
         background: #f5a62318 !important;
       }
 
+      /* Toggle-all chip sopra le tag-grid */
+      .toggle-all-btn {
+        display: inline-block;
+        margin-top: 12px;
+        padding: 4px 12px;
+        background: transparent;
+        color: var(--accent2);
+        border: 1px dashed var(--accent2);
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .toggle-all-btn:hover {
+        background: #00d4aa18;
+      }
+
+      /* Loader / progress bar */
+      .progress-loader {
+        margin-top: 14px;
+        padding: 14px 16px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+      .progress-loader .pl-label {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+      .progress-loader .pl-label strong {
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+      }
+      .progress-loader .pl-bar {
+        height: 6px;
+        background: var(--border);
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .progress-loader .pl-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--accent), var(--accent2));
+        border-radius: 999px;
+        transition: width 0.15s ease-out;
+        width: 0%;
+      }
+
       /*Hidden Area */
       .hidden {
         display: none !important;
@@ -452,12 +504,13 @@
       <div class="progress" id="progress">
         <div class="step-dot active" data-step="0">Upload</div>
         <div class="step-dot" data-step="1">Normalize</div>
-        <div class="step-dot" data-step="2">Core fields</div>
+        <div class="step-dot" data-step="2">Events</div>
         <div class="step-dot" data-step="3">Objects</div>
-        <div class="step-dot" data-step="4">Attributes</div>
-        <div class="step-dot" data-step="5">E2O</div>
-        <div class="step-dot" data-step="6">O2O</div>
-        <div class="step-dot" data-step="7">Result</div>
+        <div class="step-dot" data-step="4">Event Attrs</div>
+        <div class="step-dot" data-step="5">Object Attrs</div>
+        <div class="step-dot" data-step="6">E2O</div>
+        <div class="step-dot" data-step="7">O2O</div>
+        <div class="step-dot" data-step="8">Result</div>
       </div>
 
       <!-- STEP 0: Upload-->
@@ -471,6 +524,13 @@
             <input type="file" id="fileInput" accept=".json,.jsonl" />
           </div>
           <div id="uploadStatus" class="hidden" style="margin-top: 12px"></div>
+          <div id="uploadLoader" class="progress-loader hidden">
+            <div class="pl-label">
+              <span id="uploadLoaderText">Caricamento…</span>
+              <strong id="uploadLoaderPct">0%</strong>
+            </div>
+            <div class="pl-bar"><div class="pl-fill" id="uploadLoaderFill"></div></div>
+          </div>
         </div>
 
         <div class="card">
@@ -533,24 +593,80 @@
         </div>
       </div>
 
-      <!-- STEP 2: Core fields -->
+      <!-- STEP 2: Events -->
       <div id="step-2" class="hidden">
         <div class="card">
           <div class="card-title">
-            <span class="num">3</span> Core OCEL fields
+            <span class="num">3</span> Events
           </div>
-          <div class="card-desc">Map the three core OCEL fields.</div>
-          <div class="field">
-            <label>Event ID column</label>
-            <select id="sel-eventId"></select>
+          <div class="card-desc">
+            Definisci come ogni record sorgente diventa uno o più eventi OCEL.
           </div>
+
           <div class="field">
-            <label>Activity column</label>
-            <select id="sel-activity"></select>
+            <label>Event ID</label>
+            <div style="display: flex; gap: 8px; align-items: stretch">
+              <select id="sel-eventId" style="flex: 1"></select>
+              <button
+                type="button"
+                class="btn btn-secondary"
+                id="btnUuid"
+                onclick="toggleUuidId()"
+                title="Genera un UUID v4 random per ogni evento"
+                style="white-space: nowrap"
+              >
+                🎲 UUID
+              </button>
+            </div>
           </div>
+
           <div class="field">
-            <label>Timestamp column</label>
+            <label>Timestamp</label>
             <select id="sel-timestamp"></select>
+          </div>
+
+          <div class="field" style="margin-top: 18px">
+            <label>Event types</label>
+            <div
+              class="card-desc"
+              style="margin: 0 0 8px 0; font-size: 12px"
+            >
+              Seleziona uno o più campi che fungono da attività. Per ognuno
+              scegli un nome del tipo OCEL (lascia vuoto per usare il valore
+              della cella come tipo).
+            </div>
+            <div id="activityTagGrid" class="tag-grid"></div>
+            <div
+              id="activityTypeRows"
+              style="
+                margin-top: 14px;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+              "
+            ></div>
+          </div>
+
+          <div
+            style="
+              margin-top: 22px;
+              padding-top: 18px;
+              border-top: 1px solid var(--border);
+            "
+          >
+            <div
+              style="font-weight: 600; margin-bottom: 4px; color: var(--accent)"
+            >
+              Sorgenti di eventi aggiuntive
+            </div>
+            <div class="card-desc" style="margin-bottom: 12px">
+              Seleziona array annidati che contengono altri eventi da estrarre
+              (es. <code>events[]</code> o <code>internalTxs[]</code>). Ogni
+              elemento dell'array genera un evento OCEL distinto, con gli stessi
+              oggetti dell'evento principale.
+            </div>
+            <div id="extraSourcesGrid" class="tag-grid"></div>
+            <div id="extraSourcesRows" style="margin-top: 12px"></div>
           </div>
         </div>
         <div class="nav">
@@ -566,8 +682,8 @@
         <div class="card">
           <div class="card-title"><span class="num">4</span> Object types</div>
           <div class="card-desc">
-            Select which columns represent participating entities (accounts,
-            contracts, assets…). For each one, choose a type name for OCEL.
+            Seleziona quali campi rappresentano entità partecipanti (account,
+            contract, asset…). Per ognuno scegli il nome del tipo OCEL.
           </div>
           <div id="objectTagGrid" class="tag-grid"></div>
           <div
@@ -583,92 +699,101 @@
         <div class="nav">
           <button class="btn btn-secondary" onclick="goTo(2)">Back</button>
           <button class="btn btn-primary" onclick="goTo(4)">
-            Next: Attributes
+            Next: Event attributes
           </button>
         </div>
       </div>
 
-      <!-- STEP 4: Attributes -->
+      <!-- STEP 4: Event attributes -->
       <div id="step-4" class="hidden">
         <div class="card">
-          <div class="card-title"><span class="num">5</span> Attributes</div>
+          <div class="card-title">
+            <span class="num">5</span> Event attributes
+          </div>
           <div class="card-desc">
-            Assign remaining columns as object attributes or event attributes.
+            Campi che descrivono il singolo evento (cambiano da una transazione
+            all'altra). Es. <code>blockNumber</code>, <code>gasUsed</code>.
           </div>
-
-          <div id="attrSection">
-            <div
-              style="
-                font-weight: 600;
-                margin-bottom: 10px;
-                color: var(--accent);
-              "
-            >
-              Object attributes
-            </div>
-            <div id="objAttrRows"></div>
-            <div
-              style="
-                font-weight: 600;
-                margin: 18px 0 10px;
-                color: var(--accent);
-              "
-            >
-              Event attributes
-            </div>
-            <div class="tag-grid" id="evAttrGrid"></div>
-          </div>
+          <div class="tag-grid" id="evAttrGrid"></div>
         </div>
         <div class="nav">
           <button class="btn btn-secondary" onclick="goTo(3)">Back</button>
-          <button class="btn btn-primary" onclick="goTo(5)">Next: E2O</button>
-        </div>
-      </div>
-
-      <!-- STEP 5: E2O qualifiers -->
-      <div id="step-5" class="hidden">
-        <div class="card">
-          <div class="card-title">
-            <span class="num">6</span> E2O qualifiers
-          </div>
-          <div class="card-desc">
-            Define the <em>role</em> of each object in an event. For example
-            <code>sender → account : initiator</code>.
-          </div>
-          <div id="e2oList" class="rule-list"></div>
-          <button class="btn-add" onclick="addE2ORow()">+ Add E2O rule</button>
-        </div>
-        <div class="nav">
-          <button class="btn btn-secondary" onclick="goTo(4)">Back</button>
-          <button class="btn btn-primary" onclick="goTo(6)">Next: O2O</button>
-        </div>
-      </div>
-
-      <!-- STEP 6: O2O rules -->
-      <div id="step-6" class="hidden">
-        <div class="card">
-          <div class="card-title">
-            <span class="num">7</span> O2O relationships
-          </div>
-          <div class="card-desc">
-            Define direct relationships between objects. For example:
-            <code>account → contract : interacts_with</code>.
-          </div>
-          <div id="o2oList" class="rule-list"></div>
-          <button class="btn-add" onclick="addO2ORow()">+ Add O2O rule</button>
-        </div>
-        <div class="nav">
-          <button class="btn btn-secondary" onclick="goTo(5)">Back</button>
-          <button class="btn btn-primary" onclick="runMapping()">
-            Run mapping
+          <button class="btn btn-primary" onclick="goTo(5)">
+            Next: Object attributes
           </button>
         </div>
       </div>
 
-      <!-- STEP 7: Result -->
+      <!-- STEP 5: Object attributes -->
+      <div id="step-5" class="hidden">
+        <div class="card">
+          <div class="card-title">
+            <span class="num">6</span> Object attributes
+          </div>
+          <div class="card-desc">
+            Campi che descrivono un'entità (restano costanti per quell'istanza).
+            Es. <code>hospitalName</code> per un ospedale.
+          </div>
+          <div id="objAttrRows"></div>
+        </div>
+        <div class="nav">
+          <button class="btn btn-secondary" onclick="goTo(4)">Back</button>
+          <button class="btn btn-primary" onclick="goTo(6)">Next: E2O</button>
+        </div>
+      </div>
+
+      <!-- STEP 6: E2O qualifiers -->
+      <div id="step-6" class="hidden">
+        <div class="card">
+          <div class="card-title">
+            <span class="num">7</span> E2O qualifiers
+          </div>
+          <div class="card-desc">
+            Definisci il <em>ruolo</em> di ogni oggetto in un evento. Esempio:
+            <code>sender → account : initiator</code>.
+          </div>
+          <div id="e2oList" class="rule-list"></div>
+          <button class="btn-add" onclick="addE2ORow()">+ Aggiungi regola E2O</button>
+        </div>
+        <div class="nav">
+          <button class="btn btn-secondary" onclick="goTo(5)">Back</button>
+          <button class="btn btn-primary" onclick="goTo(7)">Next: O2O</button>
+        </div>
+      </div>
+
+      <!-- STEP 7: O2O rules -->
       <div id="step-7" class="hidden">
         <div class="card">
-          <div class="card-title"><span class="num">8</span> Result</div>
+          <div class="card-title">
+            <span class="num">8</span> O2O relationships
+          </div>
+          <div class="card-desc">
+            Definisci relazioni dirette tra oggetti. Esempio:
+            <code>account → contract : interacts_with</code>.
+          </div>
+          <div id="o2oList" class="rule-list"></div>
+          <button class="btn-add" onclick="addO2ORow()">+ Aggiungi regola O2O</button>
+
+          <div id="mappingLoader" class="progress-loader hidden">
+            <div class="pl-label">
+              <span id="mappingLoaderText">Mapping in corso…</span>
+              <strong id="mappingLoaderPct">0%</strong>
+            </div>
+            <div class="pl-bar"><div class="pl-fill" id="mappingLoaderFill"></div></div>
+          </div>
+        </div>
+        <div class="nav">
+          <button class="btn btn-secondary" onclick="goTo(6)">Back</button>
+          <button class="btn btn-primary" id="btnRunMapping" onclick="runMapping()">
+            Esegui mapping
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 8: Result -->
+      <div id="step-8" class="hidden">
+        <div class="card">
+          <div class="card-title"><span class="num">9</span> Result</div>
           <div class="card-desc">
             OCEL 2.0 mapping successfully. Now you can download the file
           </div>
@@ -677,7 +802,7 @@
           <div class="json-preview" id="jsonPreview"></div>
         </div>
         <div class="nav" style="flex-wrap: wrap; gap: 10px">
-          <button class="btn btn-secondary" onclick="goTo(6)">Back</button>
+          <button class="btn btn-secondary" onclick="goTo(7)">Back</button>
           <div
             style="
               display: flex;
