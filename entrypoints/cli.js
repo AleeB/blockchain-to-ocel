@@ -106,8 +106,15 @@ async function runConvert(args) {
   // Mapping
   section("Mapping");
   const mapper = new OcelMapper(config);
-  const ocel = mapper.map(records);
+  // Passa anche i record RAW: servono al mapper per accedere agli array
+  // originali quando il config contiene additionalEventSources (es. blockchain
+  // tx con events[] o internalTxs[] da estrarre come eventi distinti).
+  const ocel = mapper.map(records, raw);
   ok(`Prodotti ${ocel.events.length} eventi e ${ocel.objects.length} oggetti`);
+  if (config.additionalEventSources?.length) {
+    const subCount = ocel.events.filter((e) => e.attributes?._subEvent === true).length;
+    if (subCount) info(`Di cui ${subCount} estratti dalle sorgenti aggiuntive`);
+  }
 
   // Validazione
   if (values.validate) {

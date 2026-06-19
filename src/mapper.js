@@ -127,11 +127,17 @@ export class OcelMapper {
     // La chiave e' "tipooggetto:idoggetto" (es. "wallet:0xAaBb...")
     const objectsMap = new Map();
 
-    // Determina le activity sources: se più di una, ogni record produce N eventi
-    // (uno per ogni source). Se vuota o singola, fallback al vecchio activityColumn.
-    const sources = (this.config.activitySources && this.config.activitySources.length)
+    // Determina le activity sources. Due modalità:
+    //   - modalità esplicita (activitySources non vuoto): il tipo evento è
+    //     src.typeName, oppure "colonna:valore" se typeName è null/assente.
+    //     Serve a disambiguare quando un record produce più eventi.
+    //   - modalità legacy (solo activityColumn): il tipo evento è il valore
+    //     raw della cella, senza prefisso. Mantiene il comportamento storico
+    //     dell'unico activityColumn descritto nelle prime versioni del tool.
+    const hasExplicitSources = !!(this.config.activitySources && this.config.activitySources.length);
+    const sources = hasExplicitSources
       ? this.config.activitySources
-      : [{ column: this.config.activityColumn, typeName: null }];
+      : [{ column: this.config.activityColumn, typeName: null, _legacyMode: true }];
 
     // Fase 1: un record alla volta
     for (let recIdx = 0; recIdx < records.length; recIdx++) {
@@ -141,22 +147,31 @@ export class OcelMapper {
       const time = this._parseTimestamp(record[this.config.timestampColumn]);
 
       for (const src of sources) {
-        const eventId = this._resolveEventId(record);
+        const eventId = this._resolveEventId(record, src, sources.length);
         const cellValue = record[src.column];
         // Se la cella è vuota per QUESTA sorgente, salta SOLO questo evento.
         // Le altre sorgenti dello stesso record possono comunque produrre eventi.
         if (!eventId || cellValue === null || cellValue === undefined || cellValue === "")
           continue;
 
-        // Se typeName è valorizzato → event.type = typeName (l'utente ha già
-        // scelto un nome esplicito). Altrimenti → event.type = "colonna:valore"
+        // Modalità legacy → event.type = valore raw (nessun prefisso).
+        // Modalità esplicita con typeName → event.type = typeName.
+        // Modalità esplicita senza typeName → event.type = "colonna:valore",
         // per rendere visibile la provenienza nel log e nei tool OCPM.
         // Il valore originale finisce in attributes._activity per analisi a valle.
         const rawCell = String(cellValue);
-        const activity = src.typeName || `${src.column}:${rawCell}`;
-        const extraAttrs = src.typeName
-          ? { _activity: rawCell }
-          : { _activity: rawCell, _source: src.column };
+        let activity;
+        let extraAttrs;
+        if (src._legacyMode) {
+          activity = rawCell;
+          extraAttrs = { _activity: rawCell };
+        } else if (src.typeName) {
+          activity = src.typeName;
+          extraAttrs = { _activity: rawCell };
+        } else {
+          activity = `${src.column}:${rawCell}`;
+          extraAttrs = { _activity: rawCell, _source: src.column };
+        }
 
       // 1a. Registra il tipo di evento (una sola volta per tipo)
       if (!ocel.eventTypes.find((et) => et.name === activity)) {
@@ -240,13 +255,18 @@ export class OcelMapper {
   /**
    * Restituisce l'ID dell'evento principale per un record.
    * Se eventIdColumn === UUID_SENTINEL, genera un UUID v4 al volo.
-   * Altrimenti pesca dalla colonna indicata.
+   * Altrimenti pesca dalla colonna indicata. Quando lo stesso record produce
+   * più eventi (più activitySources) e l'ID è letto da colonna, concatena al
+   * valore il nome della colonna sorgente per evitare la collisione di ID che
+   * altrimenti farebbe fallire la validazione del log.
    * @private
    */
-  _resolveEventId(record) {
+  _resolveEventId(record, src, sourcesCount = 1) {
     if (this.config.eventIdColumn === UUID_SENTINEL) return genUuid();
     const v = record[this.config.eventIdColumn];
-    return v === undefined || v === null ? "" : String(v);
+    if (v === undefined || v === null) return "";
+    const base = String(v);
+    return sourcesCount > 1 && src?.column ? `${base}:${src.column}` : base;
   }
 
   /**
@@ -305,11 +325,15 @@ export class OcelMapper {
         // Il sub-evento parte con le relazioni di default dal padre
         // (oggetti del record sorgente), poi vengono filtrate le E2O specifiche
         // per il suo tipo. Così "Approval" può avere regole diverse da "lock".
+        // _subEvent: true è il marker univoco che identifica gli eventi prodotti
+        // da additionalEventSources (a differenza di _source, che il mapper
+        // imposta anche su eventi principali in modalità activitySources).
         const subEvent = {
           id,
           type: activity,
           time: parentEvent.time,
           attributes: {
+            _subEvent: true,
             _source: src.qualifier,
             _activity: String(rawActivity),
           },
