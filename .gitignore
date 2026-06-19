@@ -1,6 +1,10 @@
 # Dipendenze Node.js 
 node_modules/
 
+# Cartelle esempio
+examples/configs/
+examples/mapped/
+
 # Output di build / log di conversione
 *.jsonocel
 *.log
