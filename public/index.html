@@ -711,10 +711,12 @@
             <span class="num">5</span> Event attributes
           </div>
           <div class="card-desc">
-            Campi che descrivono il singolo evento (cambiano da una transazione
-            all'altra). Es. <code>blockNumber</code>, <code>gasUsed</code>.
+            Per ciascun tipo di evento, scegli quali campi diventano i suoi
+            attributi. Tipi di evento diversi possono avere attributi diversi
+            (es. <code>order-placed</code> ha <code>quantity</code>,
+            <code>shipment-delivered</code> ha <code>weight_kg</code>).
           </div>
-          <div class="tag-grid" id="evAttrGrid"></div>
+          <div id="evAttrGrid"></div>
         </div>
         <div class="nav">
           <button class="btn btn-secondary" onclick="goTo(3)">Back</button>

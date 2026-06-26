@@ -41,6 +41,7 @@
  * @property {ObjectTypeMapping[]} objectTypes
  * @property {string[]}            [columnsToNormalize]
  * @property {string[]}            [eventAttributes]
+ * @property {Object<string,string[]>} [eventTypeAttributes]
  * @property {E2ORule[]}           [e2oRules]
  * @property {O2ORule[]}           [o2oRules]
  */

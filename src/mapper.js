@@ -177,7 +177,7 @@ export class OcelMapper {
       if (!ocel.eventTypes.find((et) => et.name === activity)) {
         ocel.eventTypes.push({
           name: activity,
-          attributes: this._buildEventTypeAttributeSchema(),
+          attributes: this._buildEventTypeAttributeSchema(activity),
         });
       }
 
@@ -186,7 +186,10 @@ export class OcelMapper {
         id: eventId,
         type: activity,
         time,
-        attributes: { ...this._extractEventAttributes(record), ...extraAttrs },
+        attributes: {
+          ...this._extractEventAttributes(record, activity),
+          ...extraAttrs,
+        },
         relationships: [],
       };
 
@@ -317,9 +320,13 @@ export class OcelMapper {
           : src.arrayPath;
         const activity = `${sourcePath}:${String(rawActivity)}`;
 
-        // Registra il tipo di evento secondario
+        // Registra il tipo di evento secondario, con eventuali attributi
+        // configurati dall'utente per quel tipo (o per la sorgente).
         if (!ocel.eventTypes.find((et) => et.name === activity)) {
-          ocel.eventTypes.push({ name: activity, attributes: [] });
+          ocel.eventTypes.push({
+            name: activity,
+            attributes: this._buildEventTypeAttributeSchema(activity),
+          });
         }
 
         // Il sub-evento parte con le relazioni di default dal padre
@@ -328,11 +335,14 @@ export class OcelMapper {
         // _subEvent: true è il marker univoco che identifica gli eventi prodotti
         // da additionalEventSources (a differenza di _source, che il mapper
         // imposta anche su eventi principali in modalità activitySources).
+        // Gli attributi utente vengono letti dall'ELEMENTO dell'array (item),
+        // non dal record padre: i campi rilevanti sono quelli dell'elemento.
         const subEvent = {
           id,
           type: activity,
           time: parentEvent.time,
           attributes: {
+            ...this._extractEventAttributes(item, activity),
             _subEvent: true,
             _source: src.qualifier,
             _activity: String(rawActivity),
@@ -378,13 +388,27 @@ export class OcelMapper {
       : d.toISOString();
   }
 
+  /**
+   * Risolve la lista di attributi da estrarre per uno specifico tipo di evento.
+   * Priorità: eventTypeAttributes[activity] -> eventTypeAttributes[colonnaSorgente]
+   * (per attività value-based come "activity:order-placed") -> eventAttributes
+   * (legacy globale).
+   * @private
+   */
+  _resolveEventAttributesFor(activity) {
+    const perType = this.config.eventTypeAttributes;
+    if (perType && perType[activity]) return perType[activity];
+    if (perType && typeof activity === "string" && activity.includes(":")) {
+      const col = activity.split(":")[0];
+      if (perType[col]) return perType[col];
+    }
+    return this.config.eventAttributes || [];
+  }
+
   /** @private */
-  _buildEventTypeAttributeSchema() {
-    if (!this.config.eventAttributes) return [];
-    return this.config.eventAttributes.map((attr) => ({
-      name: attr,
-      type: "string",
-    }));
+  _buildEventTypeAttributeSchema(activity) {
+    const attrs = this._resolveEventAttributesFor(activity);
+    return attrs.map((attr) => ({ name: attr, type: "string" }));
   }
 
   /** @private */
@@ -394,13 +418,12 @@ export class OcelMapper {
   }
 
   /** @private */
-  _extractEventAttributes(record) {
+  _extractEventAttributes(record, activity) {
     const attrs = {};
-    if (this.config.eventAttributes) {
-      for (const attr of this.config.eventAttributes) {
-        if (record[attr] !== undefined) {
-          attrs[attr] = record[attr];
-        }
+    const attrList = this._resolveEventAttributesFor(activity);
+    for (const attr of attrList) {
+      if (record[attr] !== undefined) {
+        attrs[attr] = record[attr];
       }
     }
     return attrs;

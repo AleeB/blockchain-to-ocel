@@ -44,7 +44,8 @@ const S = {
   timestampCol: NONE_SENTINEL, //evitiamo un code smell
   objectCols: [], // [{ col: string, typeName: string }]
   objAttrs: {}, // { typeName: string[] }  — attributi per ogni tipo oggetto
-  evAttrs: [], // colonne selezionate come attributi evento
+  evAttrs: {}, // { [eventType]: string[] } — attributi PER tipo di evento
+  evAttrExpanded: {}, // { [sourceKey]: bool } — sorgenti espanse per tipo
   e2oRules: [], // [{ column, objectType, qualifier }]
   o2oRules: [], // [{ sourceType, sourceColumn, targetType, targetColumn, qualifier }]
 
@@ -253,7 +254,8 @@ window.resetAll = function () {
   S.timestampCol = NONE_SENTINEL;
   S.objectCols = [];
   S.objAttrs = {};
-  S.evAttrs = [];
+  S.evAttrs = {};
+  S.evAttrExpanded = {};
   S.e2oRules = [];
   S.o2oRules = [];
   S.extraSources = [];
@@ -556,6 +558,17 @@ function _distinctValuesInArray(arrayPath, fieldName, cap = 200) {
   return [...out].sort();
 }
 
+/** Valori distinti di una colonna top-level. Stessa logica con cap di sicurezza. */
+function _distinctValuesInColumn(col, cap = 200) {
+  const out = new Set();
+  for (const r of S.records) {
+    const v = r[col];
+    if (v !== null && v !== undefined && v !== "") out.add(String(v));
+    if (out.size >= cap) break;
+  }
+  return [...out].sort();
+}
+
 /** Allinea S.extraSources e le righe di config in base ai tag selezionati. */
 function _syncExtraSourceRows() {
   const selected = [
@@ -768,26 +781,210 @@ function _remainingColumns() {
   return S.allCols.filter((c) => !used.has(c));
 }
 
-// step 4: griglia di tag per gli attributi DELL'EVENTO
-// (campi che variano da una transazione all'altra)
+// step 4: una sezione per ogni SORGENTE di evento. Ogni sorgente ha due modalità:
+//  - Collassata (default): un'unica grid di attributi che vale per TUTTI gli
+//    eventi prodotti dalla sorgente. Comodo quando i tipi condividono lo
+//    schema o quando ce ne sono molti.
+//  - Espansa: una sotto-grid per CIASCUN tipo distinto, così l'utente può
+//    dare attributi diversi a eventi diversi della stessa sorgente.
+// La chiave del mapper-resolver fa fallback sul prefisso, quindi la modalità
+// collassata funziona automaticamente (key = sourcePath senza valore).
 function renderEventAttrsStep() {
   const evGrid = document.getElementById("evAttrGrid");
   evGrid.innerHTML = "";
-  const remaining = _remainingColumns();
 
-  remaining.forEach((col) => {
-    const tag = document.createElement("div");
-    tag.className = "tag" + (S.evAttrs.includes(col) ? " selected" : "");
-    tag.dataset.col = col;
-    tag.textContent = col;
-    tag.addEventListener("click", () => {
-      tag.classList.toggle("selected");
-      S.evAttrs = [...evGrid.querySelectorAll(".tag.selected")].map(
-        (t) => t.dataset.col,
-      );
-    });
-    evGrid.appendChild(tag);
+  const sources = _enumerateSourcesForAttrs();
+
+  if (!sources.length) {
+    evGrid.innerHTML =
+      '<p style="color:var(--muted); font-size:13px">Nessuna sorgente di evento selezionata allo step 3.</p>';
+    return;
+  }
+
+  sources.forEach((src) => _renderEvAttrSource(evGrid, src));
+}
+
+/**
+ * Per ogni sorgente di evento, descrive:
+ *  - sourceKey: chiave "prefisso" (es. "functionName", "internalTxs.activity")
+ *  - sourceLabel: etichetta human-readable per il box
+ *  - columns: colonne disponibili come attributi
+ *  - canExpand: se la sorgente può produrre più di un tipo (toggle espandibile)
+ *  - types: lista di sotto-tipi distinti, ognuno con { key, value, label }
+ */
+function _enumerateSourcesForAttrs() {
+  const out = [];
+  const remainingTop = _remainingColumns();
+
+  // ----- 1) Sorgenti principali -----
+  S.activityCols.forEach((src) => {
+    if (src.typeName) {
+      // typeName esplicito: tipo singolo, niente da espandere
+      out.push({
+        sourceKey: src.typeName,
+        sourceLabel: `<strong>${src.typeName}</strong> <span style="color:var(--muted); font-weight:normal">(da ${src.col})</span>`,
+        columns: remainingTop,
+        canExpand: false,
+        types: [],
+      });
+    } else {
+      const values = _distinctValuesInColumn(src.col);
+      out.push({
+        sourceKey: src.col,
+        sourceLabel: `<strong>${src.col}</strong> <span style="color:var(--muted); font-weight:normal">(uno per valore)</span>`,
+        columns: remainingTop,
+        canExpand: values.length > 1,
+        types: values.map((v) => ({
+          key: `${src.col}:${v}`,
+          value: v,
+          label: v,
+        })),
+      });
+    }
   });
+
+  // ----- 2) Sorgenti aggiuntive (additional event sources) -----
+  S.extraSources.forEach((src) => {
+    const sampleItem = S.raw[0]?.[src.arrayPath]?.[0] || {};
+    const itemCols = Object.keys(sampleItem).filter(
+      (c) => c !== src.activityField && c !== src.idField,
+    );
+    const sourcePath = src.activityField
+      ? `${src.arrayPath}.${src.activityField}`
+      : src.arrayPath;
+
+    if (!src.activityField) {
+      out.push({
+        sourceKey: sourcePath,
+        sourceLabel: `<strong>${src.arrayPath}[]</strong> <span style="color:var(--muted); font-weight:normal">(additional, tipo unico)</span>`,
+        columns: itemCols,
+        canExpand: false,
+        types: [],
+        empty: "Nessun campo disponibile sugli elementi (oltre activity / id).",
+      });
+      return;
+    }
+
+    const values =
+      Array.isArray(src.includeTypes) && src.includeTypes.length > 0
+        ? src.includeTypes
+        : _distinctValuesInArray(src.arrayPath, src.activityField);
+
+    out.push({
+      sourceKey: sourcePath,
+      sourceLabel:
+        `<strong>${src.arrayPath}[]</strong> ` +
+        `<span style="color:var(--muted); font-weight:normal">(additional, tipo letto da <code>${src.activityField}</code>)</span>`,
+      columns: itemCols,
+      canExpand: values.length > 1,
+      types: values.map((v) => ({
+        key: `${sourcePath}:${v}`,
+        value: v,
+        label: v,
+      })),
+      empty: "Nessun campo disponibile sugli elementi (oltre activity / id).",
+    });
+  });
+
+  return out;
+}
+
+/** Disegna un box per una singola sorgente: header con toggle, e poi
+ *  una grid (collassata) o N grid (espansa). */
+function _renderEvAttrSource(parent, src) {
+  const isExpanded = !!S.evAttrExpanded[src.sourceKey];
+
+  const box = document.createElement("div");
+  box.style.cssText =
+    "background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:10px";
+
+  // Header con toggle
+  const header = document.createElement("div");
+  header.style.cssText =
+    "display:flex; align-items:center; justify-content:space-between; margin-bottom:10px";
+  const headerLabel = document.createElement("div");
+  headerLabel.style.cssText = "font-size:13px";
+  headerLabel.innerHTML = `Sorgente: ${src.sourceLabel}`;
+  header.appendChild(headerLabel);
+
+  if (src.canExpand) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "btn btn-secondary";
+    toggle.style.cssText = "font-size:11px; padding:4px 10px";
+    toggle.textContent = isExpanded
+      ? `← Comprimi (attributi condivisi)`
+      : `Espandi per tipo (${src.types.length}) →`;
+    toggle.addEventListener("click", () => {
+      S.evAttrExpanded[src.sourceKey] = !isExpanded;
+      renderEventAttrsStep();
+    });
+    header.appendChild(toggle);
+  }
+
+  box.appendChild(header);
+
+  if (!isExpanded || !src.canExpand) {
+    // Modalità collassata: una sola grid, key = sourceKey
+    // (il mapper farà fallback sul prefisso per ogni tipo prodotto)
+    _renderEvAttrSection(box, {
+      key: src.sourceKey,
+      label: `<em>tutti i tipi</em>`,
+      columns: src.columns,
+      empty: src.empty,
+    });
+  } else {
+    // Modalità espansa: una grid per ciascun sotto-tipo
+    src.types.forEach((t) => {
+      _renderEvAttrSection(box, {
+        key: t.key,
+        label: `<strong>${t.label}</strong>`,
+        columns: src.columns,
+        empty: src.empty,
+      });
+    });
+  }
+
+  parent.appendChild(box);
+}
+
+/** Helper: una sezione "attributi per tipo di evento". */
+function _renderEvAttrSection(parent, { key, label, columns, empty }) {
+  const prevAttrs = S.evAttrs[key] || [];
+
+  const section = document.createElement("div");
+  section.style.marginBottom = "8px";
+  section.innerHTML = `
+    <label style="font-size:12px">Attributi per ${label}</label>
+    <div class="tag-grid" data-evtype="${key}"></div>
+  `;
+  const tagGrid = section.querySelector(".tag-grid");
+
+  if (!columns.length) {
+    tagGrid.innerHTML = `<p style="color:var(--muted); font-size:12px">${
+      empty || "Nessuna colonna libera disponibile."
+    }</p>`;
+  } else {
+    columns.forEach((col) => {
+      const tag = document.createElement("div");
+      tag.className = "tag" + (prevAttrs.includes(col) ? " selected" : "");
+      tag.dataset.col = col;
+      tag.textContent = col;
+      tag.addEventListener("click", () => {
+        tag.classList.toggle("selected");
+        const selected = [...tagGrid.querySelectorAll(".tag.selected")].map(
+          (t) => t.dataset.col,
+        );
+        // Niente entry vuote: se non ci sono tag selezionati lasciamo che il
+        // resolver del mapper cada sul prefisso o sul globale.
+        if (selected.length === 0) delete S.evAttrs[key];
+        else S.evAttrs[key] = selected;
+      });
+      tagGrid.appendChild(tag);
+    });
+  }
+
+  parent.appendChild(section);
 }
 
 // step 5: per ogni tipo oggetto, griglia di tag per i suoi attributi
@@ -796,8 +993,12 @@ function renderObjectAttrsStep() {
   const objRows = document.getElementById("objAttrRows");
   objRows.innerHTML = "";
 
-  // Esclude le colonne già usate come attributi evento per evitare doppioni
-  const remaining = _remainingColumns().filter((c) => !S.evAttrs.includes(c));
+  // Esclude le colonne già usate come attributi evento (in QUALSIASI eventType)
+  // per evitare che un campo sia sia event-attr sia object-attr.
+  const usedAsEvAttr = new Set(
+    Object.values(S.evAttrs || {}).flat(),
+  );
+  const remaining = _remainingColumns().filter((c) => !usedAsEvAttr.has(c));
 
   S.objectCols.forEach((obj) => {
     const prevAttrs = S.objAttrs[obj.typeName] || [];
@@ -1055,13 +1256,18 @@ window.runMapping = async function () {
       ...grid.querySelectorAll(".tag.selected"),
     ].map((t) => t.dataset.col);
   });
-  // Step 4 - attributi evento (UI separata da quella oggetti)
-  const evGrid = document.getElementById("evAttrGrid");
-  if (evGrid) {
-    S.evAttrs = [...evGrid.querySelectorAll(".tag.selected")].map(
+  // Step 4 - attributi evento PER TIPO di evento. La modalità collassata/espansa
+  // determina le chiavi visibili nell'UI. Salvo solo entry NON vuote: così il
+  // resolver del mapper cade sul prefisso (collapse) o sul globale quando un
+  // tipo non ha attributi configurati.
+  document.querySelectorAll("#evAttrGrid [data-evtype]").forEach((grid) => {
+    const key = grid.dataset.evtype;
+    const selected = [...grid.querySelectorAll(".tag.selected")].map(
       (t) => t.dataset.col,
     );
-  }
+    if (selected.length === 0) delete S.evAttrs[key];
+    else S.evAttrs[key] = selected;
+  });
 
   // Costruisce objectTypes combinando col, typeName e attributi
   const objectTypes = S.objectCols.map((o) => ({
@@ -1079,13 +1285,21 @@ window.runMapping = async function () {
     typeName: a.typeName || null, // null = usa il valore della cella
   }));
 
+  // Per retro-compatibilità (config esportato + chi rilegge il file): manteniamo
+  // anche un eventAttributes globale = unione di tutti gli attributi scelti.
+  // Il mapper preferisce la mappa per-tipo quando presente.
+  const evAttrsGlobal = [
+    ...new Set(Object.values(S.evAttrs || {}).flat()),
+  ];
+
   S.config = buildConfig({
     eventIdColumn: S.eventIdCol,
     activityColumn: cfgActivityColumn,
     timestampColumn: S.timestampCol,
     columnsToNormalize: S.selectedNested,
     objectTypes,
-    eventAttributes: S.evAttrs,
+    eventAttributes: evAttrsGlobal,
+    eventTypeAttributes: S.evAttrs,
     e2oRules: S.e2oRules,
     o2oRules: S.o2oRules,
     additionalEventSources: S.extraSources,

@@ -13,6 +13,7 @@ export class ConfigBuilder {
       columnsToNormalize: [...(base.columnsToNormalize || [])],
       objectTypes: [...(base.objectTypes || [])],
       eventAttributes: [...(base.eventAttributes || [])],
+      eventTypeAttributes: { ...(base.eventTypeAttributes || {}) },
       e2oRules: [...(base.e2oRules || [])],
       o2oRules: [...(base.o2oRules || [])],
       activitySources: [...(base.activitySources || [])],
@@ -70,6 +71,32 @@ export class ConfigBuilder {
     if (!this._config.eventAttributes.includes(col)) {
       this._config.eventAttributes.push(col);
     }
+    return this;
+  }
+
+  /**
+   * Associa un attributo a uno specifico tipo di evento. Sovrascrive il default
+   * globale di eventAttributes per quel tipo.
+   * @returns {this}
+   */
+  addEventTypeAttribute(eventType, col) {
+    if (!eventType) throw new Error("addEventTypeAttribute: eventType è obbligatorio");
+    if (!this._config.eventTypeAttributes[eventType]) {
+      this._config.eventTypeAttributes[eventType] = [];
+    }
+    if (!this._config.eventTypeAttributes[eventType].includes(col)) {
+      this._config.eventTypeAttributes[eventType].push(col);
+    }
+    return this;
+  }
+
+  /**
+   * Imposta in blocco la mappa tipo-evento → attributi.
+   * @param {Object<string,string[]>} map
+   * @returns {this}
+   */
+  setEventTypeAttributes(map) {
+    this._config.eventTypeAttributes = { ...(map || {}) };
     return this;
   }
 
