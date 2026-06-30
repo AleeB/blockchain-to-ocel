@@ -493,11 +493,11 @@ function _applyUuidVisualState(on) {
   if (on) {
     btn.classList.remove("btn-secondary");
     btn.classList.add("btn-success");
-    btn.textContent = "🎲 UUID attivo";
+    btn.textContent = "UUID attivo";
   } else {
     btn.classList.add("btn-secondary");
     btn.classList.remove("btn-success");
-    btn.textContent = "🎲 UUID";
+    btn.textContent = "UUID";
   }
 }
 
