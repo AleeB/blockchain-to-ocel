@@ -1,9 +1,9 @@
 # blockchain-to-ocel
 
-Libreria e CLI per convertire dati blockchain (transazioni, log di eventi, chiamate interne, ecc.) in formato **[OCEL 2.0](https://www.ocel-standard.org/)** (Object-Centric Event Log), lo standard per il process mining object-centric.
+Libreria e CLI per convertire dati blockchain (transazioni, log di eventi, chiamate interne, ecc.) in formato **[OCEL 2.0](https://www.ocel-standard.org/)** (Object-Centric Event Log), lo standard per il Object-Centric Process Mining
 
 Include:
-- una **libreria Node.js** zero-dipendenze per il mapping (`OcelMapper`) e la costruzione del config (`ConfigBuilder`);
+- una **libreria Node.js** zero-dipendenze per il mapping (`OcelMapper`) e la costruzione del config (`ConfigBuilder`). Ogni modulo è agnostico e separato dagli altri, così da poterne usare per progetti differenti.
 - un **wizard web** interattivo per configurare il mapping senza scrivere codice;
 - una **CLI** per convertire un file blockchain in un file `.jsonocel` a partire da un config.
 
@@ -16,13 +16,11 @@ Include:
 - [MappingConfig](#mappingconfig)
 - [Struttura del progetto](#struttura-del-progetto)
 - [Esempi](#esempi)
-- [Benchmark](#benchmark)
-- [Licenza](#licenza)
 
 ## Requisiti
 
-- Node.js ≥ 18 (usa `crypto.randomUUID`, ES Modules, `util.parseArgs`)
-- Nessuna dipendenza esterna: il progetto non ha pacchetti npm in `dependencies`
+- Node.js ≥ 18
+- Nessuna dipendenza esterna
 
 ## Installazione
 
@@ -39,7 +37,8 @@ Avvia il server statico che serve il wizard:
 
 ```bash
 npm start
-# oppure: node entrypoints/server.js [porta]   (default: 3000)
+# oppure: 
+node entrypoints/server.js [porta]   (default: 3000)
 ```
 
 Poi apri `http://localhost:3000` nel browser. Il wizard guida passo dopo passo attraverso:
@@ -73,7 +72,7 @@ Opzioni:
 
 Il file di config può essere scritto a mano seguendo lo schema [MappingConfig](#mappingconfig), oppure esportato dal wizard web ("Download config" nello step Result).
 
-## Uso programmatico
+## Uso programmatico (Libreria)
 
 ```js
 import { OcelMapper, ConfigBuilder, loadFromFile, validateOcel } from "blockchain-to-ocel";
@@ -147,21 +146,8 @@ src/
   exporter.js / exporter.browser.js   scrittura/download dei file di output
   types.js           definizioni di tipo (JSDoc) del progetto
 examples/            dataset di esempio, config e output di riferimento
-bench.mjs            benchmark della pipeline su dataset sintetici
 ```
 
 ## Esempi
 
 La cartella [`examples/`](examples/) contiene dataset e config di riferimento per diversi scenari (e-commerce, farmaceutico, governance on-chain, transazioni con chiamate interne ed eventi annidati). Sono usati anche per verificare a mano la compatibilità tra wizard e CLI.
-
-## Benchmark
-
-```bash
-node bench.mjs 50000
-```
-
-Genera un dataset sintetico blockchain-like (con campi annidati) di N record, esegue l'intera pipeline (normalizzazione, mapping, validazione, serializzazione) e stampa una riga CSV `N,timeMs,peakRssMB,events,objects`.
-
-## Licenza
-
-MIT
