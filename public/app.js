@@ -82,8 +82,8 @@ window.goTo = function (step) {
   // Ogni step ha una funzione render* che popola il suo contenuto dinamico
   if (step === 1) renderNormalizeStep();
   if (step === 2) renderEventsStep();
-  if (step === 3) renderObjectsStep();
-  if (step === 4) renderEventAttrsStep();
+  if (step === 3) renderEventAttrsStep();
+  if (step === 4) renderObjectsStep();
   if (step === 5) renderObjectAttrsStep();
   if (step === 6) renderE2OStep();
   if (step === 7) renderO2OStep();
@@ -178,6 +178,131 @@ function _addToggleAllButton(gridEl, label = "Seleziona tutti") {
   });
 
   gridEl.parentNode.insertBefore(btn, gridEl);
+}
+
+/** Raggruppa i tag di una grid che condividono lo stesso prefisso di array
+ *  appiattito (es. "inputs.0.inputName", "inputs.1.type" → prefisso "inputs")
+ *  dietro un bottone-combobox + un triangolino di espansione separato:
+ *  - il bottone (testo + contatore) seleziona/deseleziona TUTTO il gruppo
+ *    in un click, com'era già;
+ *  - il triangolino ▸/▾ espande/comprime la lista SENZA toccare la
+ *    selezione, così è possibile selezionare anche un singolo elemento su
+ *    centinaia senza dover prima selezionarli tutti e poi deselezionare
+ *    il resto.
+ *
+ *  I tag del gruppo sono visibili quando il gruppo è espanso a mano
+ *  (triangolino) OPPURE quando c'è almeno un elemento selezionato al suo
+ *  interno (così lo stato "parziale" resta sempre ispezionabile).
+ *
+ *  Stato del bottone principale:
+ *  - tutti selezionati  → stile "pieno" (classe selected)
+ *  - nessuno selezionato → stile normale, contatore "(0)"
+ *  - selezione parziale  → stile normale ma testo in grassetto
+ *
+ *  Va chiamata DOPO che i singoli tag (con i loro handler di stato) sono
+ *  già stati inseriti nella grid, così il bottone può riusare tag.click()
+ *  per restare sincronizzato con lo stato applicativo (S.*) senza duplicarlo. */
+function _addGroupedToggleButtons(gridEl) {
+  const tags = [...gridEl.querySelectorAll(".tag[data-col]")];
+  if (!tags.length) return;
+
+  // Una colonna appartiene a un gruppo quando è nella forma "prefix.<indice>.resto"
+  const groupRe = /^(.+?)\.\d+\.[^.]+$/;
+  const groups = new Map(); // prefix -> tagEl[]
+  tags.forEach((tag) => {
+    const m = tag.dataset.col.match(groupRe);
+    if (!m) return;
+    const prefix = m[1];
+    if (!groups.has(prefix)) groups.set(prefix, []);
+    groups.get(prefix).push(tag);
+  });
+
+  for (const [prefix, groupTags] of groups) {
+    // Se il gruppo arriva già con qualcosa di selezionato (es. tornando a
+    // uno step precedente), parte espanso così lo stato è visibile subito.
+    // Da qui in poi però il triangolino è l'unico a decidere: si può
+    // richiudere il gruppo anche con elementi ancora selezionati.
+    let expanded = groupTags.some((t) => t.classList.contains("selected"));
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tag group-toggle";
+
+    const caret = document.createElement("button");
+    caret.type = "button";
+    caret.className = "group-toggle-caret";
+    caret.title = "Espandi/comprimi la lista";
+
+    // Contenitore dei tag del gruppo: "display:contents" li fa comportare
+    // come figli diretti della grid (stesso layout flex-wrap), ma permette
+    // di nascondere/mostrare l'intero gruppo con un solo display toggle.
+    const wrapper = document.createElement("div");
+    wrapper.className = "group-wrapper";
+    gridEl.insertBefore(wrapper, groupTags[0]);
+    groupTags.forEach((t) => wrapper.appendChild(t));
+
+    // Righe separatrici (colore del bottone) che delimitano visivamente
+    // dove iniziano e finiscono i campi del gruppo, visibili solo quando
+    // il gruppo è espanso. flex-basis:100% forza a capo nella grid a
+    // flex-wrap, facendo apparire la riga come un divisore a tutta larghezza.
+    const topLine = document.createElement("div");
+    topLine.className = "group-divider";
+    const bottomLine = document.createElement("div");
+    bottomLine.className = "group-divider";
+
+    gridEl.insertBefore(topLine, wrapper);
+    gridEl.insertBefore(caret, topLine);
+    gridEl.insertBefore(btn, caret);
+    wrapper.after(bottomLine);
+
+    const updateVisibility = () => {
+      wrapper.style.display = expanded ? "contents" : "none";
+      topLine.style.display = expanded ? "block" : "none";
+      bottomLine.style.display = expanded ? "block" : "none";
+      caret.textContent = expanded ? "▾" : "▸";
+    };
+
+    const updateBtn = () => {
+      const selCount = groupTags.filter((t) =>
+        t.classList.contains("selected"),
+      ).length;
+      const allSel = selCount === groupTags.length;
+      const noneSel = selCount === 0;
+      btn.classList.toggle("selected", allSel);
+      btn.style.fontWeight = !allSel && !noneSel ? "700" : "400";
+      btn.textContent = `${prefix} (${selCount})`;
+    };
+
+    btn.addEventListener("click", () => {
+      const selCount = groupTags.filter((t) =>
+        t.classList.contains("selected"),
+      ).length;
+      const allSel = selCount === groupTags.length;
+      // Tutti selezionati -> deseleziona tutto; altrimenti seleziona tutto
+      groupTags.forEach((t) => {
+        const isSel = t.classList.contains("selected");
+        if (allSel && isSel) t.click();
+        else if (!allSel && !isSel) t.click();
+      });
+      // Selezionando tutto vogliamo vederlo; deselezionando tutto torniamo
+      // allo stato compatto (a meno che l'utente non riespanda a mano).
+      expanded = !allSel;
+      updateBtn();
+      updateVisibility();
+    });
+
+    caret.addEventListener("click", () => {
+      expanded = !expanded;
+      updateVisibility();
+    });
+
+    // Ogni click su un tag del gruppo (singolo) tiene aggiornato il bottone
+    // (solo contatore/grassetto: la visibilità resta decisa dal triangolino)
+    groupTags.forEach((t) => t.addEventListener("click", updateBtn));
+
+    updateBtn();
+    updateVisibility();
+  }
 }
 
 /** Mostra/aggiorna/nasconde un loader generico (upload o mapping). */
@@ -426,39 +551,18 @@ function _renderActivityTagGrid() {
     }
   }
   _addToggleAllButton(grid, "Seleziona / Deseleziona tutti");
+  _addGroupedToggleButtons(grid);
   _syncActivityTypeRows();
 }
 
-/** Allinea le righe di typeName ai tag attualmente selezionati. */
+/** Aggiorna S.activityCols in base ai tag attualmente selezionati. */
 function _syncActivityTypeRows() {
   const selected = [
-    ...document.querySelectorAll("#activityTagGrid .tag.selected"),
+    ...document.querySelectorAll("#activityTagGrid .tag.selected[data-col]"),
   ].map((t) => t.dataset.col);
-  const rows = document.getElementById("activityTypeRows");
-  rows.innerHTML = "";
 
-  // Preserva i typeName già inseriti per le colonne che restano selezionate
-  S.activityCols = selected.map((col) => {
-    const prev = S.activityCols.find((a) => a.col === col);
-    return { col, typeName: prev?.typeName ?? "" };
-  });
-
-  S.activityCols.forEach((ac, idx) => {
-    const row = document.createElement("div");
-    row.className = "grid-2";
-    row.style.alignItems = "center";
-    row.innerHTML = `
-      <div style="font-size:12px; color:var(--muted)">
-        Type name per <strong style="color:var(--text)">${ac.col}</strong>
-        <div style="font-size:10px; opacity:0.7">vuoto = usa il valore della cella</div>
-      </div>
-      <input type="text" value="${ac.typeName}" placeholder="(valore della cella)" />
-    `;
-    row.querySelector("input").addEventListener("input", (e) => {
-      S.activityCols[idx].typeName = e.target.value.trim();
-    });
-    rows.appendChild(row);
-  });
+  // Il typeName resta sempre vuoto: il tipo OCEL è il valore della cella.
+  S.activityCols = selected.map((col) => ({ col, typeName: "" }));
 }
 
 // cerca la prima keyword nella lista delle colonne e pre-seleziona quella
@@ -529,7 +633,7 @@ function _renderExtraSourcesSection() {
     const isSel = S.extraSources.some((s) => s.arrayPath === path);
     tag.className = "tag" + (isSel ? " selected" : "");
     tag.dataset.path = path;
-    tag.innerHTML = `${path}[] <span class="sample">array</span>`;
+    tag.innerHTML = `${path}[]`;
     tag.addEventListener("click", () => {
       tag.classList.toggle("selected");
       _syncExtraSourceRows();
@@ -539,6 +643,29 @@ function _renderExtraSourcesSection() {
 
   _addToggleAllButton(grid, "Seleziona / Deseleziona tutti");
   _syncExtraSourceRows();
+}
+
+/** Anteprima di un elemento rappresentativo per un dato valore del campo
+ *  activity: alcuni campi scalari (non activityField) del primo item, in
+ *  qualsiasi record raw, con quel valore — utile per distinguere i tipi
+ *  quando il campo activity non è tra le prime chiavi dell'oggetto. */
+function _itemPreviewForType(arrayPath, activityField, typeValue) {
+  for (const r of S.raw) {
+    const arr = r[arrayPath];
+    if (!Array.isArray(arr)) continue;
+    for (const item of arr) {
+      if (!item || String(item[activityField]) !== typeValue) continue;
+      const parts = [];
+      for (const [k, v] of Object.entries(item)) {
+        if (k === activityField) continue;
+        if (v === null || typeof v === "object") continue;
+        parts.push(`${k}: ${String(v).slice(0, 30)}`);
+        if (parts.length >= 3) break;
+      }
+      return parts.join(", ");
+    }
+  }
+  return "";
 }
 
 /** Calcola i valori distinti di un campo dentro un array path,
@@ -616,12 +743,8 @@ function _syncExtraSourceRows() {
           <strong>${src.arrayPath}</strong>[]
         </div>
         <div>
-          <label>Campo activity</label>
+          <label>Event Type Name</label>
           <select data-key="activityField">${fieldOptions}</select>
-        </div>
-        <div>
-          <label>Qualifier sorgente</label>
-          <input type="text" data-key="qualifier" value="${src.qualifier}" placeholder="es. emitted_event" />
         </div>
         <div style="font-size:11px; color:var(--muted)">
           ${(S.raw[0]?.[src.arrayPath] || []).length} elementi nel primo record
@@ -679,7 +802,8 @@ function _renderIncludeTypesGrid(card, idx) {
     const isSel = includeAll || src.includeTypes.includes(t);
     tag.className = "tag" + (isSel ? " selected" : "");
     tag.dataset.type = t;
-    tag.textContent = t;
+    const preview = _itemPreviewForType(src.arrayPath, src.activityField, t);
+    tag.innerHTML = `${t} <span class="sample">${preview}</span>`;
     tag.addEventListener("click", () => {
       tag.classList.toggle("selected");
       const allSelected = [...grid.querySelectorAll(".tag.selected")].map(
@@ -702,9 +826,7 @@ function _renderIncludeTypesGrid(card, idx) {
 // step 3: griglia di tag per scegliere le colonne ID oggetto
 function renderObjectsStep() {
   const tagGrid = document.getElementById("objectTagGrid");
-  const nameRows = document.getElementById("typeNameRows");
   tagGrid.innerHTML = "";
-  nameRows.innerHTML = "";
 
   S.allCols.forEach((col) => {
     const tag = document.createElement("div");
@@ -725,19 +847,17 @@ function renderObjectsStep() {
   });
 
   _addToggleAllButton(tagGrid, "Seleziona / Deseleziona tutti");
-  // Ripristina le righe dei nomi tipo se ci sono selezioni precedenti
-  if (S.objectCols.length) _syncObjectTypeRows();
+  _addGroupedToggleButtons(tagGrid);
+  _syncObjectTypeRows();
 }
 
-// aggiorna le righe input per i nomi-tipo ogni volta che cambia la selezione
+// aggiorna S.objectCols ogni volta che cambia la selezione dei tag.
+// Il typeName è derivato automaticamente dal nome colonna (niente input manuale).
 function _syncObjectTypeRows() {
   const selected = [
-    ...document.querySelectorAll("#objectTagGrid .tag.selected"),
+    ...document.querySelectorAll("#objectTagGrid .tag.selected[data-col]"),
   ].map((t) => t.dataset.col);
-  const rows = document.getElementById("typeNameRows");
-  rows.innerHTML = "";
 
-  // Aggiorna S.objectCols preservando i typeName già inseriti
   S.objectCols = selected.map((col) => {
     const prev = S.objectCols.find((o) => o.col === col);
     // Default typeName: ultima parte del nome colonna (es. "sender" -> "sender")
@@ -745,24 +865,6 @@ function _syncObjectTypeRows() {
       col,
       typeName: prev?.typeName || col.split(/[._]/).pop().toLowerCase(),
     };
-  });
-
-  // Crea una riga <input> per ogni tipo selezionato
-  S.objectCols.forEach((obj, idx) => {
-    const row = document.createElement("div");
-    row.className = "grid-2";
-    row.style.alignItems = "center";
-    row.innerHTML = `
-      <div style="font-size:12px; color:var(--muted)">
-        Nome tipo per <strong style="color:var(--text)">${obj.col}</strong>
-      </div>
-      <input type="text" value="${obj.typeName}" data-idx="${idx}" placeholder="account" />
-    `;
-    // Aggiorna S.objectCols[idx].typeName in tempo reale mentre l'utente digita
-    row.querySelector("input").addEventListener("input", (e) => {
-      S.objectCols[idx].typeName = e.target.value.trim() || "object";
-    });
-    rows.appendChild(row);
   });
 }
 
@@ -844,11 +946,9 @@ function _enumerateSourcesForAttrs() {
   });
 
   // ----- 2) Sorgenti aggiuntive (additional event sources) -----
+  // Stessa lista di colonne della sorgente principale: gli attributi
+  // disponibili per functionName sono visualizzabili anche qui.
   S.extraSources.forEach((src) => {
-    const sampleItem = S.raw[0]?.[src.arrayPath]?.[0] || {};
-    const itemCols = Object.keys(sampleItem).filter(
-      (c) => c !== src.activityField && c !== src.idField,
-    );
     const sourcePath = src.activityField
       ? `${src.arrayPath}.${src.activityField}`
       : src.arrayPath;
@@ -857,7 +957,7 @@ function _enumerateSourcesForAttrs() {
       out.push({
         sourceKey: sourcePath,
         sourceLabel: `<strong>${src.arrayPath}[]</strong> <span style="color:var(--muted); font-weight:normal">(additional, tipo unico)</span>`,
-        columns: itemCols,
+        columns: remainingTop,
         canExpand: false,
         types: [],
         empty: "Nessun campo disponibile sugli elementi (oltre activity / id).",
@@ -875,7 +975,7 @@ function _enumerateSourcesForAttrs() {
       sourceLabel:
         `<strong>${src.arrayPath}[]</strong> ` +
         `<span style="color:var(--muted); font-weight:normal">(additional, tipo letto da <code>${src.activityField}</code>)</span>`,
-      columns: itemCols,
+      columns: remainingTop,
       canExpand: values.length > 1,
       types: values.map((v) => ({
         key: `${sourcePath}:${v}`,
@@ -955,7 +1055,7 @@ function _renderEvAttrSection(parent, { key, label, columns, empty }) {
   const section = document.createElement("div");
   section.style.marginBottom = "8px";
   section.innerHTML = `
-    <label style="font-size:12px">Attributi per ${label}</label>
+    <label style="font-size:12px">Select Attriutes per event type: ${label}</label>
     <div class="tag-grid" data-evtype="${key}"></div>
   `;
   const tagGrid = section.querySelector(".tag-grid");
@@ -969,12 +1069,13 @@ function _renderEvAttrSection(parent, { key, label, columns, empty }) {
       const tag = document.createElement("div");
       tag.className = "tag" + (prevAttrs.includes(col) ? " selected" : "");
       tag.dataset.col = col;
-      tag.textContent = col;
+      const sample = sampleValues(S.records, col)[0] || "";
+      tag.innerHTML = `${col} <span class="sample">${sample}</span>`;
       tag.addEventListener("click", () => {
         tag.classList.toggle("selected");
-        const selected = [...tagGrid.querySelectorAll(".tag.selected")].map(
-          (t) => t.dataset.col,
-        );
+        const selected = [
+          ...tagGrid.querySelectorAll(".tag.selected[data-col]"),
+        ].map((t) => t.dataset.col);
         // Niente entry vuote: se non ci sono tag selezionati lasciamo che il
         // resolver del mapper cada sul prefisso o sul globale.
         if (selected.length === 0) delete S.evAttrs[key];
@@ -982,6 +1083,7 @@ function _renderEvAttrSection(parent, { key, label, columns, empty }) {
       });
       tagGrid.appendChild(tag);
     });
+    _addGroupedToggleButtons(tagGrid);
   }
 
   parent.appendChild(section);
@@ -1005,7 +1107,7 @@ function renderObjectAttrsStep() {
     const section = document.createElement("div");
     section.style.marginBottom = "12px";
     section.innerHTML = `
-      <label>Attributi per <strong>${obj.typeName}</strong></label>
+      <label>Select Attributes per Object Type: <strong>${obj.typeName}</strong></label>
       <div class="tag-grid" data-type="${obj.typeName}"></div>
     `;
 
@@ -1014,15 +1116,17 @@ function renderObjectAttrsStep() {
       const tag = document.createElement("div");
       tag.className = "tag" + (prevAttrs.includes(col) ? " selected" : "");
       tag.dataset.col = col;
-      tag.textContent = col;
+      const sample = sampleValues(S.records, col)[0] || "";
+      tag.innerHTML = `${col} <span class="sample">${sample}</span>`;
       tag.addEventListener("click", () => {
         tag.classList.toggle("selected");
         S.objAttrs[obj.typeName] = [
-          ...tagGrid.querySelectorAll(".tag.selected"),
+          ...tagGrid.querySelectorAll(".tag.selected[data-col]"),
         ].map((t) => t.dataset.col);
       });
       tagGrid.appendChild(tag);
     });
+    _addGroupedToggleButtons(tagGrid);
 
     objRows.appendChild(section);
     S.objAttrs[obj.typeName] = prevAttrs;
@@ -1121,7 +1225,7 @@ window.addE2ORow = function (preset = {}) {
   row.innerHTML = `
     <div><label>Event type</label><select data-key="eventType">${evOptions}</select></div>
     <div><label>Object type</label><select data-key="objectType">${objOptions}</select></div>
-    <div><label>Qualifier</label>
+    <div><label>Qualifier <span style="color:var(--error)">*</span></label>
       <input type="text" value="${preset.qualifier || ""}" placeholder="es. initiator" />
     </div>
     <button class="btn-rm" onclick="this.closest('.rule-row').remove(); _syncE2O()">✕</button>
@@ -1151,10 +1255,26 @@ function _syncE2O() {
       };
     })
     .filter((r) => r.qualifier && r.objectType);
+
+  _updateE2ONavState();
 }
 
 // Esposta su window per essere chiamata dagli onclick delle righe
 window._syncE2O = _syncE2O;
+
+/** Disabilita "Next: O2O" finché ogni riga E2O non ha un qualifier compilato.
+ *  Evidenzia in rosso gli input vuoti per dare feedback immediato. */
+function _updateE2ONavState() {
+  const rows = [...document.querySelectorAll("#e2oList .rule-row")];
+  let valid = true;
+  rows.forEach((row) => {
+    const input = row.querySelector("input");
+    const empty = !input.value.trim();
+    input.classList.toggle("input-error", empty);
+    if (empty) valid = false;
+  });
+  document.getElementById("btnE2ONext").disabled = !valid;
+}
 
 //#endregion
 
@@ -1182,8 +1302,8 @@ window.addO2ORow = function (preset = {}) {
   row.innerHTML = `
     <div><label>Obj Type src</label><select>${typeOptions}</select></div>
     <div><label>Obj Type dst</label><select>${typeOptions}</select></div>
-    <div><label>Qualifier</label>
-      <input type="text" value="${preset.qualifier || ""}" placeholder="es. interacts_with" />
+    <div><label>Qualifier <span style="color:var(--error)">*</span></label>
+      <input type="text" value="${preset.qualifier || ""}" placeholder="es. interacts_with"/>
     </div>
     <button class="btn-rm" onclick="this.closest('.rule-row').remove(); _syncO2O()">✕</button>
   `;
@@ -1229,9 +1349,25 @@ function _syncO2O() {
       };
     })
     .filter((r) => r.qualifier && r.sourceType && r.targetType);
+
+  _updateO2ONavState();
 }
 
 window._syncO2O = _syncO2O;
+
+/** Disabilita "Esegui mapping" finché ogni riga O2O non ha un qualifier
+ *  compilato. Evidenzia in rosso gli input vuoti per feedback immediato. */
+function _updateO2ONavState() {
+  const rows = [...document.querySelectorAll("#o2oList .rule-row")];
+  let valid = true;
+  rows.forEach((row) => {
+    const input = row.querySelector("input");
+    const empty = !input.value.trim();
+    input.classList.toggle("input-error", empty);
+    if (empty) valid = false;
+  });
+  document.getElementById("btnRunMapping").disabled = !valid;
+}
 
 //#endregion
 

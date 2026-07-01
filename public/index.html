@@ -186,6 +186,48 @@
         font-size: 10px;
         opacity: 0.7;
       }
+      /* Bottone-combobox che raggruppa i sotto-campi di un array appiattito
+         (es. "inputs.0.*", "inputs.1.*", ...): seleziona/deseleziona tutto
+         il gruppo in un click. Stile a parte per distinguerlo dai tag normali. */
+      .tag.group-toggle {
+        border-style: dashed;
+        border-color: var(--accent2);
+        color: var(--accent2);
+        background: transparent;
+      }
+      .tag.group-toggle.selected {
+        background: var(--accent2);
+        border-color: var(--accent2);
+        border-style: solid;
+        color: #000;
+      }
+      /* Triangolino separato dal bottone-combobox: espande/comprime la
+         lista del gruppo senza toccare la selezione, utile per scegliere
+         un singolo elemento tra centinaia senza selezionarli tutti prima. */
+      .group-toggle-caret {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--muted);
+        border-radius: 20px;
+        cursor: pointer;
+        font-size: 10px;
+        padding: 5px 8px;
+        line-height: 1;
+        margin-right: -4px;
+      }
+      .group-toggle-caret:hover {
+        border-color: var(--accent2);
+        color: var(--accent2);
+      }
+      /* Riga separatrice (colore del bottone-combobox) che delimita dove
+         iniziano/finiscono i campi di un gruppo espanso dentro la grid. */
+      .group-divider {
+        flex-basis: 100%;
+        height: 2px;
+        background: var(--accent2);
+        opacity: 0.5;
+        margin: 2px 0;
+      }
 
       /* Select / Input */
       select,
@@ -203,6 +245,10 @@
       select:focus,
       input[type="text"]:focus {
         border-color: var(--accent);
+      }
+      input.input-error {
+        border-color: var(--error);
+        box-shadow: 0 0 0 1px var(--error);
       }
 
       label {
@@ -272,6 +318,13 @@
       }
       .btn-primary:hover {
         background: #5750e0;
+      }
+      .btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      .btn-primary:disabled:hover {
+        background: var(--accent);
       }
       .btn-secondary {
         background: var(--surface);
@@ -505,8 +558,8 @@
         <div class="step-dot active" data-step="0">Upload</div>
         <div class="step-dot" data-step="1">Normalize</div>
         <div class="step-dot" data-step="2">Events</div>
-        <div class="step-dot" data-step="3">Objects</div>
-        <div class="step-dot" data-step="4">Event Attrs</div>
+        <div class="step-dot" data-step="3">Event Attrs</div>
+        <div class="step-dot" data-step="4">Objects</div>
         <div class="step-dot" data-step="5">Object Attrs</div>
         <div class="step-dot" data-step="6">E2O</div>
         <div class="step-dot" data-step="7">O2O</div>
@@ -597,7 +650,7 @@
       <div id="step-2" class="hidden">
         <div class="card">
           <div class="card-title">
-            <span class="num">3</span> Events
+            <span class="num">3</span> Event Types
           </div>
           <div class="card-desc">
             Definisci come ogni record sorgente diventa uno o più eventi OCEL.
@@ -631,20 +684,10 @@
               class="card-desc"
               style="margin: 0 0 8px 0; font-size: 12px"
             >
-              Seleziona uno o più campi che fungono da attività. Per ognuno
-              scegli un nome del tipo OCEL (lascia vuoto per usare il valore
-              della cella come tipo).
+              Seleziona uno o più campi che fungono da attività: il tipo OCEL
+              corrisponderà al valore della cella.
             </div>
             <div id="activityTagGrid" class="tag-grid"></div>
-            <div
-              id="activityTypeRows"
-              style="
-                margin-top: 14px;
-                display: flex;
-                flex-direction: column;
-                gap: 10px;
-              "
-            ></div>
           </div>
 
           <div
@@ -672,43 +715,16 @@
         <div class="nav">
           <button class="btn btn-secondary" onclick="goTo(1)">Back</button>
           <button class="btn btn-primary" onclick="goTo(3)">
-            Next: Objects
-          </button>
-        </div>
-      </div>
-
-      <!-- STEP 3: Object types -->
-      <div id="step-3" class="hidden">
-        <div class="card">
-          <div class="card-title"><span class="num">4</span> Object types</div>
-          <div class="card-desc">
-            Seleziona quali campi rappresentano entità partecipanti (account,
-            contract, asset…). Per ognuno scegli il nome del tipo OCEL.
-          </div>
-          <div id="objectTagGrid" class="tag-grid"></div>
-          <div
-            id="typeNameRows"
-            style="
-              margin-top: 16px;
-              display: flex;
-              flex-direction: column;
-              gap: 10px;
-            "
-          ></div>
-        </div>
-        <div class="nav">
-          <button class="btn btn-secondary" onclick="goTo(2)">Back</button>
-          <button class="btn btn-primary" onclick="goTo(4)">
             Next: Event attributes
           </button>
         </div>
       </div>
 
-      <!-- STEP 4: Event attributes -->
-      <div id="step-4" class="hidden">
+      <!-- STEP 3: Event attributes -->
+      <div id="step-3" class="hidden">
         <div class="card">
           <div class="card-title">
-            <span class="num">5</span> Event attributes
+            <span class="num">4</span> Event Attributes
           </div>
           <div class="card-desc">
             Per ciascun tipo di evento, scegli quali campi diventano i suoi
@@ -717,6 +733,25 @@
             <code>shipment-delivered</code> ha <code>weight_kg</code>).
           </div>
           <div id="evAttrGrid"></div>
+        </div>
+        <div class="nav">
+          <button class="btn btn-secondary" onclick="goTo(2)">Back</button>
+          <button class="btn btn-primary" onclick="goTo(4)">
+            Next: Objects
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 4: Object types -->
+      <div id="step-4" class="hidden">
+        <div class="card">
+          <div class="card-title"><span class="num">5</span> Object Types</div>
+          <div class="card-desc">
+            Seleziona quali campi rappresentano entità partecipanti (account,
+            contract, asset…). Il nome del tipo OCEL viene derivato
+            automaticamente dal nome della colonna.
+          </div>
+          <div id="objectTagGrid" class="tag-grid"></div>
         </div>
         <div class="nav">
           <button class="btn btn-secondary" onclick="goTo(3)">Back</button>
@@ -730,7 +765,7 @@
       <div id="step-5" class="hidden">
         <div class="card">
           <div class="card-title">
-            <span class="num">6</span> Object attributes
+            <span class="num">6</span> Object Attributes
           </div>
           <div class="card-desc">
             Campi che descrivono un'entità (restano costanti per quell'istanza).
@@ -748,7 +783,7 @@
       <div id="step-6" class="hidden">
         <div class="card">
           <div class="card-title">
-            <span class="num">7</span> E2O qualifiers
+            <span class="num">7</span> E2O Relationships
           </div>
           <div class="card-desc">
             Definisci il <em>ruolo</em> di ogni oggetto in un evento. Esempio:
@@ -759,7 +794,7 @@
         </div>
         <div class="nav">
           <button class="btn btn-secondary" onclick="goTo(5)">Back</button>
-          <button class="btn btn-primary" onclick="goTo(7)">Next: O2O</button>
+          <button class="btn btn-primary" id="btnE2ONext" onclick="goTo(7)">Next: O2O</button>
         </div>
       </div>
 
@@ -767,7 +802,7 @@
       <div id="step-7" class="hidden">
         <div class="card">
           <div class="card-title">
-            <span class="num">8</span> O2O relationships
+            <span class="num">8</span> O2O Relationships
           </div>
           <div class="card-desc">
             Definisci relazioni dirette tra oggetti. Esempio:

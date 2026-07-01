@@ -6,6 +6,7 @@
  */
 
 import { UUID_SENTINEL } from "./wizard-helpers.js";
+import { flattenObject } from "./normalizer.js";
 
 // crypto.randomUUID() è disponibile sia in Node ≥ 14.17 che nei browser moderni
 function genUuid() {
@@ -337,12 +338,15 @@ export class OcelMapper {
         // imposta anche su eventi principali in modalità activitySources).
         // Gli attributi utente vengono letti dall'ELEMENTO dell'array (item),
         // non dal record padre: i campi rilevanti sono quelli dell'elemento.
+        // L'elemento raw è appiattito prima dell'estrazione: così campi
+        // annidati come "inputs.0.name" sono leggibili con lo stesso schema
+        // dot-notation usato per il record principale.
         const subEvent = {
           id,
           type: activity,
           time: parentEvent.time,
           attributes: {
-            ...this._extractEventAttributes(item, activity),
+            ...this._extractEventAttributes(flattenObject(item), activity),
             _subEvent: true,
             _source: src.qualifier,
             _activity: String(rawActivity),
