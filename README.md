@@ -39,7 +39,9 @@ Avvia il server statico che serve il wizard:
 
 ```bash
 npm start
-# oppure: 
+```
+oppure: 
+```bash
 node entrypoints/server.js [porta]   (default: 3000)
 ```
 
