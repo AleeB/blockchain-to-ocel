@@ -25,7 +25,7 @@ Include:
 ## Installazione
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/AleeB/blockchain-to-ocel.git
 cd blockchain-to-ocel
 ```
 
