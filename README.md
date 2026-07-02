@@ -150,4 +150,4 @@ examples/            dataset di esempio, config e output di riferimento
 
 ## Esempi
 
-La cartella [`examples/`](examples/) contiene dataset e config di riferimento per diversi scenari (e-commerce, farmaceutico, governance on-chain, transazioni con chiamate interne ed eventi annidati). Sono usati anche per verificare a mano la compatibilità tra wizard e CLI.
+La cartella [`examples/`](examples/) contiene dataset e config di riferimento per diversi scenari (e-commerce, farmaceutico, blackchain, transazioni con chiamate interne ed eventi annidati). Sono usati anche per verificare a mano la compatibilità tra wizard e CLI.

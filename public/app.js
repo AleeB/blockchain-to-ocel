@@ -10,6 +10,7 @@ import {
   sampleValues,
   validateOcel,
   getOcelStats,
+  serializeOcel,
   downloadOcel,
   downloadConfig,
   NONE_SENTINEL,
@@ -858,13 +859,24 @@ function _syncObjectTypeRows() {
     ...document.querySelectorAll("#objectTagGrid .tag.selected[data-col]"),
   ].map((t) => t.dataset.col);
 
-  S.objectCols = selected.map((col) => {
-    const prev = S.objectCols.find((o) => o.col === col);
-    // Default typeName: ultima parte del nome colonna (es. "sender" -> "sender")
-    return {
-      col,
-      typeName: prev?.typeName || col.split(/[._]/).pop().toLowerCase(),
-    };
+  // Default typeName: ultima parte del nome colonna (es. "sender" -> "sender")
+  S.objectCols = selected.map((col) => ({
+    col,
+    typeName: col.split(/[._]/).pop().toLowerCase(),
+  }));
+
+  // Risoluzione collisioni: colonne diverse possono derivare lo stesso nome
+  // (es. inputs.0.inputName e inputs.1.inputName -> "inputname"). Un typeName
+  // duplicato farebbe confluire oggetti distinti nello stesso tipo OCEL e le
+  // selezioni di attributi (S.objAttrs, indicizzate per typeName) si
+  // sovrascriverebbero a vicenda. In caso di conflitto ogni colonna usa il
+  // proprio percorso completo (univoco per costruzione) come nome tipo.
+  const nameCounts = {};
+  S.objectCols.forEach((o) => {
+    nameCounts[o.typeName] = (nameCounts[o.typeName] || 0) + 1;
+  });
+  S.objectCols.forEach((o) => {
+    if (nameCounts[o.typeName] > 1) o.typeName = o.col.toLowerCase();
   });
 }
 
@@ -920,11 +932,17 @@ function _enumerateSourcesForAttrs() {
 
   // ----- 1) Sorgenti principali -----
   S.activityCols.forEach((src) => {
+    // Valore di esempio della colonna: rende riconoscibile la sorgente
+    // anche quando più colonne hanno nomi simili (es. inputs.N.inputName)
+    const srcSample = sampleValues(S.records, src.col)[0] || "";
+    const sampleHtml = srcSample
+      ? ` — es. <span class="sample">${srcSample}</span>`
+      : "";
     if (src.typeName) {
       // typeName esplicito: tipo singolo, niente da espandere
       out.push({
         sourceKey: src.typeName,
-        sourceLabel: `<strong>${src.typeName}</strong> <span style="color:var(--muted); font-weight:normal">(da ${src.col})</span>`,
+        sourceLabel: `<strong>${src.typeName}</strong> <span style="color:var(--muted); font-weight:normal">(da ${src.col}${sampleHtml})</span>`,
         columns: remainingTop,
         canExpand: false,
         types: [],
@@ -933,7 +951,7 @@ function _enumerateSourcesForAttrs() {
       const values = _distinctValuesInColumn(src.col);
       out.push({
         sourceKey: src.col,
-        sourceLabel: `<strong>${src.col}</strong> <span style="color:var(--muted); font-weight:normal">(uno per valore)</span>`,
+        sourceLabel: `<strong>${src.col}</strong> <span style="color:var(--muted); font-weight:normal">(uno per valore${sampleHtml})</span>`,
         columns: remainingTop,
         canExpand: values.length > 1,
         types: values.map((v) => ({
@@ -1104,10 +1122,19 @@ function renderObjectAttrsStep() {
 
   S.objectCols.forEach((obj) => {
     const prevAttrs = S.objAttrs[obj.typeName] || [];
+    // Mostra anche la colonna ID di origine e un valore di esempio: più
+    // tipi oggetto possono condividere lo stesso typeName derivato
+    // (es. inputs.0.inputName e inputs.1.inputName -> "inputname") e senza
+    // questa informazione le sezioni sarebbero indistinguibili.
+    const idSample = sampleValues(S.records, obj.col)[0] || "";
     const section = document.createElement("div");
     section.style.marginBottom = "12px";
     section.innerHTML = `
-      <label>Select Attributes per Object Type: <strong>${obj.typeName}</strong></label>
+      <label>Select Attributes per Object Type: <strong>${obj.typeName}</strong>
+        <span style="color:var(--muted); font-weight:normal">— ID da <code>${obj.col}</code>${
+          idSample ? ` <span class="sample">(es. ${idSample})</span>` : ""
+        }</span>
+      </label>
       <div class="tag-grid" data-type="${obj.typeName}"></div>
     `;
 
@@ -1512,9 +1539,9 @@ function _renderResult() {
     msgs.insertAdjacentHTML("beforeend", `<div class="msg error">✗ ${e}</div>`),
   );
 
-  // Anteprima JSON
-  const full = JSON.stringify(S.ocel, null, 2);
-  document.getElementById("jsonPreview").textContent = full;
+  // Anteprima JSON: usa il serializzatore così l'anteprima coincide
+  // esattamente con il file .jsonocel che verrà scaricato (formato standard)
+  document.getElementById("jsonPreview").textContent = serializeOcel(S.ocel);
 }
 
 //#endregion
