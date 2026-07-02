@@ -24,7 +24,7 @@ export function validateOcel(ocel) {
   if (!ocel || typeof ocel !== "object") {
     return {
       valid: false,
-      errors: ["Il documento OCEL deve essere un oggetto"],
+      errors: ["The OCEL document must be an object"],
       warnings,
     };
   }
@@ -32,7 +32,7 @@ export function validateOcel(ocel) {
   // Controllo 2: array obbligatori
   for (const key of REQUIRED_ARRAYS) {
     if (!Array.isArray(ocel[key])) {
-      errors.push(`Campo obbligatorio mancante o non-array: "${key}"`);
+      errors.push(`Required field missing or not an array: "${key}"`);
     }
   }
   // Se manca anche solo un array obbligatorio i controlli successivi non possono procedere
@@ -42,25 +42,25 @@ export function validateOcel(ocel) {
   const eventIds = new Set();
   for (const event of ocel.events) {
     if (!event.id) {
-      errors.push("Trovato un evento senza id");
+      errors.push("Found an event without an id");
     } else if (eventIds.has(event.id)) {
-      errors.push(`ID evento duplicato: ${event.id}`);
+      errors.push(`Duplicate event ID: ${event.id}`);
     } else {
       eventIds.add(event.id);
     }
 
     if (!event.type) {
-      errors.push(`Evento ${event.id ?? "?"}: type mancante`);
+      errors.push(`Event ${event.id ?? "?"}: missing type`);
     }
 
     // Il timestamp mancante e' un avvertimento, non blocca l'uso del log
     if (!event.time) {
-      warnings.push(`Evento ${event.id ?? "?"}: time mancante`);
+      warnings.push(`Event ${event.id ?? "?"}: missing time`);
     }
 
     if (!Array.isArray(event.relationships)) {
       errors.push(
-        `Evento ${event.id ?? "?"}: "relationships" deve essere un array`,
+        `Event ${event.id ?? "?"}: "relationships" must be an array`,
       );
     }
   }
@@ -69,17 +69,17 @@ export function validateOcel(ocel) {
   const objectIds = new Set();
   for (const obj of ocel.objects) {
     if (!obj.id) {
-      errors.push("Trovato un oggetto senza id");
+      errors.push("Found an object without an id");
     } else if (objectIds.has(obj.id)) {
       // ID duplicati negli oggetti: avvertimento perche' alcuni strumenti lo tollerano,
       // ma di solito indica che la colonna scelta come ID non e' univoca
-      warnings.push(`ID oggetto duplicato: ${obj.id}`);
+      warnings.push(`Duplicate object ID: ${obj.id}`);
     } else {
       objectIds.add(obj.id);
     }
 
     if (!obj.type) {
-      errors.push(`Oggetto ${obj.id ?? "?"}: type mancante`);
+      errors.push(`Object ${obj.id ?? "?"}: missing type`);
     }
   }
 
@@ -88,14 +88,14 @@ export function validateOcel(ocel) {
     if (!Array.isArray(event.relationships)) continue;
     for (const rel of event.relationships) {
       if (!rel.objectId) {
-        errors.push(`Evento ${event.id}: relazione senza objectId`);
+        errors.push(`Event ${event.id}: relationship without objectId`);
       } else if (!objectIds.has(rel.objectId)) {
         errors.push(
-          `Evento ${event.id}: relazione verso oggetto inesistente "${rel.objectId}"`,
+          `Event ${event.id}: relationship to non-existent object "${rel.objectId}"`,
         );
       }
       if (!rel.qualifier) {
-        warnings.push(`Evento ${event.id}: relazione senza qualifier`);
+        warnings.push(`Event ${event.id}: relationship without qualifier`);
       }
     }
   }
@@ -105,12 +105,12 @@ export function validateOcel(ocel) {
     for (const rel of ocel.o2o) {
       if (!objectIds.has(rel.sourceId)) {
         errors.push(
-          `O2O: sorgente inesistente "${rel.sourceId}" (tipo: ${rel.sourceType})`,
+          `O2O: non-existent source "${rel.sourceId}" (type: ${rel.sourceType})`,
         );
       }
       if (!objectIds.has(rel.targetId)) {
         errors.push(
-          `O2O: destinazione inesistente "${rel.targetId}" (tipo: ${rel.targetType})`,
+          `O2O: non-existent target "${rel.targetId}" (type: ${rel.targetType})`,
         );
       }
     }
@@ -122,7 +122,7 @@ export function validateOcel(ocel) {
   for (const obj of ocel.objects) {
     if (obj.type && !declaredObjectTypes.has(obj.type)) {
       warnings.push(
-        `Oggetto "${obj.id}": tipo "${obj.type}" non dichiarato in objectTypes`,
+        `Object "${obj.id}": type "${obj.type}" not declared in objectTypes`,
       );
     }
   }
@@ -131,7 +131,7 @@ export function validateOcel(ocel) {
   for (const event of ocel.events) {
     if (event.type && !declaredEventTypes.has(event.type)) {
       warnings.push(
-        `Evento "${event.id}": tipo "${event.type}" non dichiarato in eventTypes`,
+        `Event "${event.id}": type "${event.type}" not declared in eventTypes`,
       );
     }
   }

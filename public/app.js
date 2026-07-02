@@ -59,18 +59,45 @@ const S = {
 
 let currentStep = 0;
 
+// Mappa step -> funzione che ne popola il contenuto dinamico
+const RENDER_FNS = {
+  1: renderNormalizeStep,
+  2: renderEventsStep,
+  3: renderEventAttrsStep,
+  4: renderObjectsStep,
+  5: renderObjectAttrsStep,
+  6: renderE2OStep,
+  7: renderO2OStep,
+};
+
+/** Mostra/nasconde l'overlay di caricamento a schermo intero usato durante
+ *  i cambi di step (render pesanti su dataset grandi, es. Normalize). */
+function _showStepLoader(text) {
+  document.getElementById("stepLoaderText").textContent = text;
+  document.getElementById("stepLoaderOverlay").classList.remove("hidden");
+}
+function _hideStepLoader() {
+  document.getElementById("stepLoaderOverlay").classList.add("hidden");
+}
+
 /**
- * Naviga allo step corretto
+ * Naviga allo step corretto.
  *
  * Esposta su window perché i bottoni HTML usano onclick="goTo(N)".
+ * Il render dello step di destinazione (e l'eventuale `preWork`, es. il
+ * flattening prima dello step Events) viene differito con setTimeout(0):
+ * senza il differimento il browser non avrebbe modo di disegnare l'overlay
+ * di caricamento prima che il lavoro sincrono (potenzialmente pesante su
+ * dataset grandi) blocchi il thread.
  *
  * @param {number} step - Indice dello step destinazione (0–7)
+ * @param {() => void} [preWork] - Lavoro sincrono da eseguire prima del
+ *   render dello step (es. la normalizzazione prima di mostrare Events).
  */
-window.goTo = function (step) {
+window.goTo = function (step, preWork) {
   document.getElementById(`step-${currentStep}`).classList.add("hidden");
-  document.getElementById(`step-${step}`).classList.remove("hidden");
 
-  // Aggiorna le classi della progress bar
+  // Aggiorna le classi della progress bar (leggero, nessun bisogno di loader)
   document.querySelectorAll(".step-dot").forEach((el, i) => {
     el.classList.toggle("done", i < step);
     el.classList.toggle("active", i === step);
@@ -80,14 +107,25 @@ window.goTo = function (step) {
 
   currentStep = step;
 
-  // Ogni step ha una funzione render* che popola il suo contenuto dinamico
-  if (step === 1) renderNormalizeStep();
-  if (step === 2) renderEventsStep();
-  if (step === 3) renderEventAttrsStep();
-  if (step === 4) renderObjectsStep();
-  if (step === 5) renderObjectAttrsStep();
-  if (step === 6) renderE2OStep();
-  if (step === 7) renderO2OStep();
+  const targetEl = document.getElementById(`step-${step}`);
+  const renderFn = RENDER_FNS[step];
+
+  // Niente da renderizzare (es. step 0) -> nessun bisogno di overlay
+  if (!renderFn && !preWork) {
+    targetEl.classList.remove("hidden");
+    return;
+  }
+
+  _showStepLoader("Loading…");
+  setTimeout(() => {
+    try {
+      preWork?.();
+      renderFn?.();
+    } finally {
+      _hideStepLoader();
+      targetEl.classList.remove("hidden");
+    }
+  }, 0);
 };
 
 //#region STEP 0: UPLOAD JSON
@@ -136,7 +174,7 @@ fileInput.addEventListener("change", () => {
 
 // aggiorna S e l'UI dopo il caricamento di un file
 function _processRecords(records, filename) {
-  if (!records.length) throw new Error("Il contenuto non contiene record.");
+  if (!records.length) throw new Error("The content contains no records.");
 
   S.filename = filename;
   S.raw = records;
@@ -146,8 +184,8 @@ function _processRecords(records, filename) {
 
   uploadStatus.className = "msg success";
   uploadStatus.textContent =
-    `✓ Caricati ${records.length.toLocaleString()} record · ` +
-    `${Object.keys(records[0]).length} colonne top-level`;
+    `✓ Loaded ${records.length.toLocaleString()} record(s) · ` +
+    `${Object.keys(records[0]).length} top-level columns`;
   uploadStatus.classList.remove("hidden");
 
   btnGoStep1.classList.remove("hidden");
@@ -157,7 +195,7 @@ function _processRecords(records, filename) {
  *  Lo aggiunge sopra il `gridEl`, calcolando lo stato iniziale dai tag presenti.
  *  Quando l'utente clicca, vengono triggerati anche i click sui singoli tag
  *  per mantenere consistenti gli handler già collegati (sync di S, ecc.). */
-function _addToggleAllButton(gridEl, label = "Seleziona tutti") {
+function _addToggleAllButton(gridEl, label = "Select all") {
   // Evita doppi inserimenti se la funzione viene richiamata sullo stesso grid
   const existing = gridEl.previousElementSibling;
   if (existing?.classList.contains("toggle-all-btn")) existing.remove();
@@ -207,8 +245,12 @@ function _addGroupedToggleButtons(gridEl) {
   const tags = [...gridEl.querySelectorAll(".tag[data-col]")];
   if (!tags.length) return;
 
-  // Una colonna appartiene a un gruppo quando è nella forma "prefix.<indice>.resto"
-  const groupRe = /^(.+?)\.\d+\.[^.]+$/;
+  // Una colonna appartiene a un gruppo quando è nella forma "prefix.<indice>.resto":
+  // il "resto" può a sua volta contenere altri punti (es. "events.35.eventValues.node",
+  // dove l'elemento dell'array ha una struttura annidata), quindi si ferma al PRIMO
+  // indice numerico incontrato (grazie a ".+?" non-greedy) e raggruppa tutto ciò che
+  // segue sotto il nome dell'array più esterno.
+  const groupRe = /^(.+?)\.\d+\..+$/;
   const groups = new Map(); // prefix -> tagEl[]
   tags.forEach((tag) => {
     const m = tag.dataset.col.match(groupRe);
@@ -232,7 +274,7 @@ function _addGroupedToggleButtons(gridEl) {
     const caret = document.createElement("button");
     caret.type = "button";
     caret.className = "group-toggle-caret";
-    caret.title = "Espandi/comprimi la lista";
+    caret.title = "Expand/collapse the list";
 
     // Contenitore dei tag del gruppo: "display:contents" li fa comportare
     // come figli diretti della grid (stesso layout flex-wrap), ma permette
@@ -325,13 +367,13 @@ async function handleFile(file) {
   if (!file) return;
 
   uploadStatus.className = "msg";
-  uploadStatus.textContent = "⏳ Caricamento…";
+  uploadStatus.textContent = "⏳ Loading…";
   uploadStatus.classList.remove("hidden");
 
   try {
     const records = await loadFromBrowserFile(file, {
       onProgress: (p) => {
-        const label = p.phase === "parsing" ? "Parsing JSON…" : "Lettura file…";
+        const label = p.phase === "parsing" ? "Parsing JSON…" : "Reading file…";
         _showLoader("upload", label, p.ratio);
       },
     });
@@ -359,7 +401,7 @@ window.loadFromText = function () {
     _processRecords(records, "pasted-data");
   } catch (err) {
     uploadStatus.className = "msg error";
-    uploadStatus.textContent = `✗ ${err.message} — Verifica che il testo sia JSON valido.`;
+    uploadStatus.textContent = `✗ ${err.message} — Check that the text is valid JSON.`;
     btnGoStep1.classList.add("hidden");
   }
 };
@@ -410,7 +452,7 @@ function renderNormalizeStep() {
   if (!S.nestedCols.length) {
     // Nessuna colonna annidata -> normalizzazione automatica (nulla da fare)
     container.innerHTML =
-      '<p style="color:var(--muted); font-size:13px">Nessuna colonna annidata rilevata — nulla da appiattire.</p>';
+      '<p style="color:var(--muted); font-size:13px">No nested columns detected — nothing to flatten.</p>';
     S.selectedNested = [];
     // Esegue la normalizzazione silenziosamente per aggiornare S.records e S.allCols
     _applyNormalization();
@@ -425,7 +467,7 @@ function renderNormalizeStep() {
     const tag = document.createElement("div");
     tag.className = "tag selected"; // pre-selezionate: default "appiattisce tutto"
     tag.dataset.col = col;
-    tag.innerHTML = `${col} <span class="sample">(annidato)</span>`;
+    tag.innerHTML = `${col} <span class="sample">(nested)</span>`;
 
     tag.addEventListener("click", () => {
       tag.classList.toggle("selected");
@@ -439,7 +481,7 @@ function renderNormalizeStep() {
   });
 
   container.appendChild(grid);
-  _addToggleAllButton(grid, "Seleziona / Deseleziona tutti");
+  _addToggleAllButton(grid, "Select / Deselect all");
   S.selectedNested = [...S.nestedCols]; // tutte selezionate di default
 }
 
@@ -454,15 +496,17 @@ function _applyNormalization() {
 
 // bottone "Normalize & Continue": appiattisce e va allo step 2
 window.doNormalize = function () {
-  S.selectedNested = [
-    ...document.querySelectorAll("#step-1 .tag.selected"),
-  ].map((t) => t.dataset.col);
-  S.records = normalizeRecords(S.raw, S.selectedNested);
-  // Raccoglie le chiavi da TUTTI i record normalizzati
-  S.allCols = collectAllColumns(S.records);
-
-  // Progressione verso lo step 2
-  goTo(2);
+  // Il flattening (potenzialmente pesante su dataset grandi/molto annidati)
+  // gira come preWork di goTo(): resta coperto dallo stesso overlay di
+  // caricamento usato per il render dello step Events, un solo show/hide.
+  goTo(2, () => {
+    S.selectedNested = [
+      ...document.querySelectorAll("#step-1 .tag.selected"),
+    ].map((t) => t.dataset.col);
+    S.records = normalizeRecords(S.raw, S.selectedNested);
+    // Raccoglie le chiavi da TUTTI i record normalizzati
+    S.allCols = collectAllColumns(S.records);
+  });
 };
 
 //#endregion
@@ -551,7 +595,7 @@ function _renderActivityTagGrid() {
       }
     }
   }
-  _addToggleAllButton(grid, "Seleziona / Deseleziona tutti");
+  _addToggleAllButton(grid, "Select / Deselect all");
   _addGroupedToggleButtons(grid);
   _syncActivityTypeRows();
 }
@@ -598,7 +642,7 @@ function _applyUuidVisualState(on) {
   if (on) {
     btn.classList.remove("btn-secondary");
     btn.classList.add("btn-success");
-    btn.textContent = "UUID attivo";
+    btn.textContent = "UUID active";
   } else {
     btn.classList.add("btn-secondary");
     btn.classList.remove("btn-success");
@@ -624,7 +668,7 @@ function _renderExtraSourcesSection() {
 
   if (!candidates.length) {
     grid.innerHTML =
-      '<p style="color:var(--muted); font-size:12px">Nessun array di oggetti rilevato nei record sorgente.</p>';
+      '<p style="color:var(--muted); font-size:12px">No array of objects detected in the source records.</p>';
     rows.innerHTML = "";
     return;
   }
@@ -642,7 +686,7 @@ function _renderExtraSourcesSection() {
     grid.appendChild(tag);
   });
 
-  _addToggleAllButton(grid, "Seleziona / Deseleziona tutti");
+  _addToggleAllButton(grid, "Select / Deselect all");
   _syncExtraSourceRows();
 }
 
@@ -748,15 +792,15 @@ function _syncExtraSourceRows() {
           <select data-key="activityField">${fieldOptions}</select>
         </div>
         <div style="font-size:11px; color:var(--muted)">
-          ${(S.raw[0]?.[src.arrayPath] || []).length} elementi nel primo record
+          ${(S.raw[0]?.[src.arrayPath] || []).length} elements in the first record
         </div>
       </div>
       <div style="margin-top:10px">
-        <label>Tipi evento da includere</label>
+        <label>Event types to include</label>
         <div class="card-desc" style="margin:0 0 6px; font-size:11px">
-          Lascia tutti selezionati per includere ogni tipo, oppure scegli solo
-          quelli che ti interessano. I tipi sono i valori distinti del
-          <code>campo activity</code> qui sopra.
+          Leave all selected to include every type, or choose only the
+          ones you're interested in. The types are the distinct values of
+          the <code>activity field</code> above.
         </div>
         <div class="tag-grid" data-key="includeTypes"></div>
       </div>
@@ -793,7 +837,7 @@ function _renderIncludeTypesGrid(card, idx) {
   const types = _distinctValuesInArray(src.arrayPath, src.activityField);
   if (!types.length) {
     grid.innerHTML =
-      '<p style="color:var(--muted); font-size:12px">Nessun valore trovato per questo campo.</p>';
+      '<p style="color:var(--muted); font-size:12px">No value found for this field.</p>';
     return;
   }
   // Se includeTypes è vuoto significa "tutti": pre-seleziona tutti i tag
@@ -817,7 +861,7 @@ function _renderIncludeTypesGrid(card, idx) {
     });
     grid.appendChild(tag);
   });
-  _addToggleAllButton(grid, "Seleziona / Deseleziona tutti");
+  _addToggleAllButton(grid, "Select / Deselect all");
 }
 
 //#endregion
@@ -847,7 +891,7 @@ function renderObjectsStep() {
     tagGrid.appendChild(tag);
   });
 
-  _addToggleAllButton(tagGrid, "Seleziona / Deseleziona tutti");
+  _addToggleAllButton(tagGrid, "Select / Deselect all");
   _addGroupedToggleButtons(tagGrid);
   _syncObjectTypeRows();
 }
@@ -911,7 +955,7 @@ function renderEventAttrsStep() {
 
   if (!sources.length) {
     evGrid.innerHTML =
-      '<p style="color:var(--muted); font-size:13px">Nessuna sorgente di evento selezionata allo step 3.</p>';
+      '<p style="color:var(--muted); font-size:13px">No event source selected in the previous step.</p>';
     return;
   }
 
@@ -936,13 +980,13 @@ function _enumerateSourcesForAttrs() {
     // anche quando più colonne hanno nomi simili (es. inputs.N.inputName)
     const srcSample = sampleValues(S.records, src.col)[0] || "";
     const sampleHtml = srcSample
-      ? ` — es. <span class="sample">${srcSample}</span>`
+      ? ` — sample: <span class="sample">${srcSample}</span>`
       : "";
     if (src.typeName) {
       // typeName esplicito: tipo singolo, niente da espandere
       out.push({
         sourceKey: src.typeName,
-        sourceLabel: `<strong>${src.typeName}</strong> <span style="color:var(--muted); font-weight:normal">(da ${src.col}${sampleHtml})</span>`,
+        sourceLabel: `<strong>${src.typeName}</strong> <span style="color:var(--muted); font-weight:normal">(from ${src.col}${sampleHtml})</span>`,
         columns: remainingTop,
         canExpand: false,
         types: [],
@@ -951,7 +995,7 @@ function _enumerateSourcesForAttrs() {
       const values = _distinctValuesInColumn(src.col);
       out.push({
         sourceKey: src.col,
-        sourceLabel: `<strong>${src.col}</strong> <span style="color:var(--muted); font-weight:normal">(uno per valore${sampleHtml})</span>`,
+        sourceLabel: `<strong>${src.col}</strong> <span style="color:var(--muted); font-weight:normal">(one per value${sampleHtml})</span>`,
         columns: remainingTop,
         canExpand: values.length > 1,
         types: values.map((v) => ({
@@ -974,11 +1018,11 @@ function _enumerateSourcesForAttrs() {
     if (!src.activityField) {
       out.push({
         sourceKey: sourcePath,
-        sourceLabel: `<strong>${src.arrayPath}[]</strong> <span style="color:var(--muted); font-weight:normal">(additional, tipo unico)</span>`,
+        sourceLabel: `<strong>${src.arrayPath}[]</strong> <span style="color:var(--muted); font-weight:normal">(additional, single type)</span>`,
         columns: remainingTop,
         canExpand: false,
         types: [],
-        empty: "Nessun campo disponibile sugli elementi (oltre activity / id).",
+        empty: "No field available on the elements (besides activity / id).",
       });
       return;
     }
@@ -992,7 +1036,7 @@ function _enumerateSourcesForAttrs() {
       sourceKey: sourcePath,
       sourceLabel:
         `<strong>${src.arrayPath}[]</strong> ` +
-        `<span style="color:var(--muted); font-weight:normal">(additional, tipo letto da <code>${src.activityField}</code>)</span>`,
+        `<span style="color:var(--muted); font-weight:normal">(additional, type read from <code>${src.activityField}</code>)</span>`,
       columns: remainingTop,
       canExpand: values.length > 1,
       types: values.map((v) => ({
@@ -1000,7 +1044,7 @@ function _enumerateSourcesForAttrs() {
         value: v,
         label: v,
       })),
-      empty: "Nessun campo disponibile sugli elementi (oltre activity / id).",
+      empty: "No field available on the elements (besides activity / id).",
     });
   });
 
@@ -1022,7 +1066,7 @@ function _renderEvAttrSource(parent, src) {
     "display:flex; align-items:center; justify-content:space-between; margin-bottom:10px";
   const headerLabel = document.createElement("div");
   headerLabel.style.cssText = "font-size:13px";
-  headerLabel.innerHTML = `Sorgente: ${src.sourceLabel}`;
+  headerLabel.innerHTML = `Source: ${src.sourceLabel}`;
   header.appendChild(headerLabel);
 
   if (src.canExpand) {
@@ -1031,8 +1075,8 @@ function _renderEvAttrSource(parent, src) {
     toggle.className = "btn btn-secondary";
     toggle.style.cssText = "font-size:11px; padding:4px 10px";
     toggle.textContent = isExpanded
-      ? `← Comprimi (attributi condivisi)`
-      : `Espandi per tipo (${src.types.length}) →`;
+      ? `← Collapse (shared attributes)`
+      : `Expand by type (${src.types.length}) →`;
     toggle.addEventListener("click", () => {
       S.evAttrExpanded[src.sourceKey] = !isExpanded;
       renderEventAttrsStep();
@@ -1047,7 +1091,7 @@ function _renderEvAttrSource(parent, src) {
     // (il mapper farà fallback sul prefisso per ogni tipo prodotto)
     _renderEvAttrSection(box, {
       key: src.sourceKey,
-      label: `<em>tutti i tipi</em>`,
+      label: `<em>all types</em>`,
       columns: src.columns,
       empty: src.empty,
     });
@@ -1073,14 +1117,14 @@ function _renderEvAttrSection(parent, { key, label, columns, empty }) {
   const section = document.createElement("div");
   section.style.marginBottom = "8px";
   section.innerHTML = `
-    <label style="font-size:12px">Select Attriutes per event type: ${label}</label>
+    <label style="font-size:12px">Select attributes for event type: ${label}</label>
     <div class="tag-grid" data-evtype="${key}"></div>
   `;
   const tagGrid = section.querySelector(".tag-grid");
 
   if (!columns.length) {
     tagGrid.innerHTML = `<p style="color:var(--muted); font-size:12px">${
-      empty || "Nessuna colonna libera disponibile."
+      empty || "No free column available."
     }</p>`;
   } else {
     columns.forEach((col) => {
@@ -1130,9 +1174,9 @@ function renderObjectAttrsStep() {
     const section = document.createElement("div");
     section.style.marginBottom = "12px";
     section.innerHTML = `
-      <label>Select Attributes per Object Type: <strong>${obj.typeName}</strong>
-        <span style="color:var(--muted); font-weight:normal">— ID da <code>${obj.col}</code>${
-          idSample ? ` <span class="sample">(es. ${idSample})</span>` : ""
+      <label>Select attributes for object type: <strong>${obj.typeName}</strong>
+        <span style="color:var(--muted); font-weight:normal">— ID from <code>${obj.col}</code>${
+          idSample ? ` <span class="sample">(sample value ${idSample})</span>` : ""
         }</span>
       </label>
       <div class="tag-grid" data-type="${obj.typeName}"></div>
@@ -1161,7 +1205,7 @@ function renderObjectAttrsStep() {
 
   if (!S.objectCols.length) {
     objRows.innerHTML =
-      '<p style="color:var(--muted); font-size:13px">Nessun tipo oggetto selezionato allo step precedente.</p>';
+      '<p style="color:var(--muted); font-size:13px">No object type selected in the previous step.</p>';
   }
 }
 
@@ -1234,7 +1278,7 @@ window.addE2ORow = function (preset = {}) {
 
   const evTypes = _collectEventTypes();
   const evOptions =
-    `<option value="*" ${!preset.eventType || preset.eventType === "*" ? "selected" : ""}>* (tutti)</option>` +
+    `<option value="*" ${!preset.eventType || preset.eventType === "*" ? "selected" : ""}>* (all)</option>` +
     evTypes
       .map(
         (t) =>
@@ -1253,7 +1297,7 @@ window.addE2ORow = function (preset = {}) {
     <div><label>Event type</label><select data-key="eventType">${evOptions}</select></div>
     <div><label>Object type</label><select data-key="objectType">${objOptions}</select></div>
     <div><label>Qualifier <span style="color:var(--error)">*</span></label>
-      <input type="text" value="${preset.qualifier || ""}" placeholder="es. initiator" />
+      <input type="text" value="${preset.qualifier || ""}" placeholder="ex. initiator" />
     </div>
     <button class="btn-rm" onclick="this.closest('.rule-row').remove(); _syncE2O()">✕</button>
   `;
@@ -1330,7 +1374,7 @@ window.addO2ORow = function (preset = {}) {
     <div><label>Obj Type src</label><select>${typeOptions}</select></div>
     <div><label>Obj Type dst</label><select>${typeOptions}</select></div>
     <div><label>Qualifier <span style="color:var(--error)">*</span></label>
-      <input type="text" value="${preset.qualifier || ""}" placeholder="es. interacts_with"/>
+      <input type="text" value="${preset.qualifier || ""}" placeholder="ex. interacts_with"/>
     </div>
     <button class="btn-rm" onclick="this.closest('.rule-row').remove(); _syncO2O()">✕</button>
   `;
@@ -1471,7 +1515,7 @@ window.runMapping = async function () {
 
   const btn = document.getElementById("btnRunMapping");
   btn?.setAttribute("disabled", "true");
-  _showLoader("mapping", "Avvio mapping…", 0);
+  _showLoader("mapping", "Starting mapping…", 0);
   try {
     // Passa anche S.raw: serve al mapper per accedere agli array originali
     // (necessario per generare gli eventi dalle additionalEventSources).
@@ -1482,8 +1526,8 @@ window.runMapping = async function () {
       onProgress: (p) => {
         const label =
           p.phase === "done"
-            ? "Mapping completato"
-            : `Eventi processati: ${p.processed.toLocaleString()} / ${p.total.toLocaleString()}`;
+            ? "Mapping complete"
+            : `Events processed: ${p.processed.toLocaleString()} / ${p.total.toLocaleString()}`;
         _showLoader("mapping", label, p.ratio);
       },
     });
@@ -1492,7 +1536,7 @@ window.runMapping = async function () {
     _renderResult();
   } catch (err) {
     _hideLoader("mapping");
-    alert(`Errore durante il mapping: ${err.message}`);
+    alert(`Error during mapping: ${err.message}`);
   } finally {
     btn?.removeAttribute("disabled");
   }
@@ -1510,10 +1554,10 @@ function _renderResult() {
   // Griglia statistiche
   const statsGrid = document.getElementById("statsGrid");
   statsGrid.innerHTML = [
-    [stats.totalEvents, "Eventi"],
-    [stats.totalObjects, "Oggetti"],
-    [stats.totalE2ORelations, "Relazioni E2O"],
-    [stats.totalO2ORelations, "Relazioni O2O"],
+    [stats.totalEvents, "Events"],
+    [stats.totalObjects, "Objects"],
+    [stats.totalE2ORelations, "E2O Relations"],
+    [stats.totalO2ORelations, "O2O Relations"],
   ]
     .map(
       ([val, label]) => `
@@ -1530,7 +1574,7 @@ function _renderResult() {
   msgs.innerHTML = "";
 
   if (valid && !warnings.length) {
-    msgs.innerHTML = '<div class="msg success">✓ Log OCEL 2.0 valido</div>';
+    msgs.innerHTML = '<div class="msg success">✓ Valid OCEL 2.0 log</div>';
   }
   warnings.forEach((w) =>
     msgs.insertAdjacentHTML("beforeend", `<div class="msg warn">⚠ ${w}</div>`),

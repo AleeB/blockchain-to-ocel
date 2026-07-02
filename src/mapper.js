@@ -37,7 +37,7 @@ export class OcelMapper {
     // activityColumn singola, o la nuova lista activitySources
     const hasActivity = !!activityColumn || (activitySources && activitySources.length > 0);
     if (!hasActivity)
-      throw new Error("MappingConfig: serve almeno una activity column / activitySource");
+      throw new Error("MappingConfig: at least one activity column / activitySource is required");
     if (!eventIdColumn)
       throw new Error("MappingConfig: eventIdColumn is required");
 

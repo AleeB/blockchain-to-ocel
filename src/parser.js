@@ -22,7 +22,7 @@ export function parseJsonOrJsonl(raw) {
       return [parsed];
     }
 
-    throw new Error(`Tipo JSON inatteso: ${typeof parsed}`);
+    throw new Error(`Unexpected JSON type: ${typeof parsed}`);
   } catch (_) {
     // Prova JSONL: ogni riga e' un oggetto JSON separato
     const lines = trimmed.split(/\r?\n/).filter((line) => line.trim());

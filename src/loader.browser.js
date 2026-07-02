@@ -48,12 +48,12 @@ export function loadFromBrowserFile(file, opts = {}) {
         onProgress?.({ phase: "done", loaded: total, total, ratio: 1 });
         resolve(data);
       } catch (err) {
-        reject(new Error(`Impossibile parsare "${file.name}": ${err.message}`));
+        reject(new Error(`Unable to parse "${file.name}": ${err.message}`));
       }
     };
 
     reader.onerror = () => {
-      reject(new Error(`Impossibile leggere il file: ${file.name}`));
+      reject(new Error(`Unable to read file: ${file.name}`));
     };
 
     reader.readAsText(file);

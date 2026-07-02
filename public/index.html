@@ -524,6 +524,39 @@
         width: 0%;
       }
 
+      /* Overlay generico mostrato durante il cambio di step: alcuni passaggi
+         (in particolare Normalize su dataset grandi) fanno lavoro sincrono
+         pesante prima di poter disegnare lo step successivo, e senza questo
+         overlay la UI resterebbe bloccata senza nessun feedback visivo. */
+      .step-loader-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 17, 23, 0.75);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        z-index: 1000;
+      }
+      .step-loader-spinner {
+        width: 36px;
+        height: 36px;
+        border: 3px solid var(--border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: step-spin 0.8s linear infinite;
+      }
+      @keyframes step-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .step-loader-text {
+        color: var(--text);
+        font-size: 13px;
+      }
+
       /*Hidden Area */
       .hidden {
         display: none !important;
@@ -544,6 +577,10 @@
     </style>
   </head>
   <body>
+    <div id="stepLoaderOverlay" class="step-loader-overlay hidden">
+      <div class="step-loader-spinner"></div>
+      <div class="step-loader-text" id="stepLoaderText">Loading…</div>
+    </div>
     <div class="app">
       <!-- Header -->
       <header>
@@ -579,7 +616,7 @@
           <div id="uploadStatus" class="hidden" style="margin-top: 12px"></div>
           <div id="uploadLoader" class="progress-loader hidden">
             <div class="pl-label">
-              <span id="uploadLoaderText">Caricamento…</span>
+              <span id="uploadLoaderText">Loading…</span>
               <strong id="uploadLoaderPct">0%</strong>
             </div>
             <div class="pl-bar"><div class="pl-fill" id="uploadLoaderFill"></div></div>
@@ -653,7 +690,7 @@
             <span class="num">3</span> Event Types
           </div>
           <div class="card-desc">
-            Definisci come ogni record sorgente diventa uno o più eventi OCEL.
+            Define how each source record becomes one or more OCEL events.
           </div>
 
           <div class="field">
@@ -665,7 +702,7 @@
                 class="btn btn-secondary"
                 id="btnUuid"
                 onclick="toggleUuidId()"
-                title="Genera un UUID v4 random per ogni evento"
+                title="Generate a random UUID v4 for each event"
                 style="white-space: nowrap"
               >
                 UUID
@@ -684,8 +721,8 @@
               class="card-desc"
               style="margin: 0 0 8px 0; font-size: 12px"
             >
-              Seleziona uno o più campi che fungono da attività: il tipo OCEL
-              corrisponderà al valore della cella.
+              Select one or more fields that act as activities: the OCEL type
+              will match the cell value.
             </div>
             <div id="activityTagGrid" class="tag-grid"></div>
           </div>
@@ -700,13 +737,12 @@
             <div
               style="font-weight: 600; margin-bottom: 4px; color: var(--accent)"
             >
-              Sorgenti di eventi aggiuntive
+              Additional event sources
             </div>
             <div class="card-desc" style="margin-bottom: 12px">
-              Seleziona array annidati che contengono altri eventi da estrarre
-              (es. <code>events[]</code> o <code>internalTxs[]</code>). Ogni
-              elemento dell'array genera un evento OCEL distinto, con gli stessi
-              oggetti dell'evento principale.
+              Select nested arrays that contain other events to extract. Each
+              array element generates a distinct OCEL event, sharing the same
+              objects as the main event.
             </div>
             <div id="extraSourcesGrid" class="tag-grid"></div>
             <div id="extraSourcesRows" style="margin-top: 12px"></div>
@@ -727,10 +763,8 @@
             <span class="num">4</span> Event Attributes
           </div>
           <div class="card-desc">
-            Per ciascun tipo di evento, scegli quali campi diventano i suoi
-            attributi. Tipi di evento diversi possono avere attributi diversi
-            (es. <code>order-placed</code> ha <code>quantity</code>,
-            <code>shipment-delivered</code> ha <code>weight_kg</code>).
+            For each event type, choose which fields become its
+            attributes. Different event types can have different attributes.
           </div>
           <div id="evAttrGrid"></div>
         </div>
@@ -747,9 +781,9 @@
         <div class="card">
           <div class="card-title"><span class="num">5</span> Object Types</div>
           <div class="card-desc">
-            Seleziona quali campi rappresentano entità partecipanti (account,
-            contract, asset…). Il nome del tipo OCEL viene derivato
-            automaticamente dal nome della colonna.
+            Select which fields represent participating entities (account,
+            contract, asset…). The OCEL type name is automatically
+            derived from the column name.
           </div>
           <div id="objectTagGrid" class="tag-grid"></div>
         </div>
@@ -768,8 +802,7 @@
             <span class="num">6</span> Object Attributes
           </div>
           <div class="card-desc">
-            Campi che descrivono un'entità (restano costanti per quell'istanza).
-            Es. <code>hospitalName</code> per un ospedale.
+            Fields that describe an entity (remain constant for that instance).
           </div>
           <div id="objAttrRows"></div>
         </div>
@@ -786,11 +819,11 @@
             <span class="num">7</span> E2O Relationships
           </div>
           <div class="card-desc">
-            Definisci il <em>ruolo</em> di ogni oggetto in un evento. Esempio:
+            Define the <em>role</em> of each object in an event. Example:
             <code>sender → account : initiator</code>.
           </div>
           <div id="e2oList" class="rule-list"></div>
-          <button class="btn-add" onclick="addE2ORow()">+ Aggiungi regola E2O</button>
+          <button class="btn-add" onclick="addE2ORow()">+ Add E2O rule</button>
         </div>
         <div class="nav">
           <button class="btn btn-secondary" onclick="goTo(5)">Back</button>
@@ -805,15 +838,15 @@
             <span class="num">8</span> O2O Relationships
           </div>
           <div class="card-desc">
-            Definisci relazioni dirette tra oggetti. Esempio:
+            Define direct relationships between objects. Example:
             <code>account → contract : interacts_with</code>.
           </div>
           <div id="o2oList" class="rule-list"></div>
-          <button class="btn-add" onclick="addO2ORow()">+ Aggiungi regola O2O</button>
+          <button class="btn-add" onclick="addO2ORow()">+ Add O2O rule</button>
 
           <div id="mappingLoader" class="progress-loader hidden">
             <div class="pl-label">
-              <span id="mappingLoaderText">Mapping in corso…</span>
+              <span id="mappingLoaderText">Mapping in progress…</span>
               <strong id="mappingLoaderPct">0%</strong>
             </div>
             <div class="pl-bar"><div class="pl-fill" id="mappingLoaderFill"></div></div>
@@ -822,7 +855,7 @@
         <div class="nav">
           <button class="btn btn-secondary" onclick="goTo(6)">Back</button>
           <button class="btn btn-primary" id="btnRunMapping" onclick="runMapping()">
-            Esegui mapping
+            Run mapping
           </button>
         </div>
       </div>
