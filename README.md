@@ -26,6 +26,8 @@ Include:
 
 ```bash
 git clone https://github.com/AleeB/blockchain-to-ocel.git
+```
+```bash
 cd blockchain-to-ocel
 ```
 
