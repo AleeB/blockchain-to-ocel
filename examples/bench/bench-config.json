@@ -1,0 +1,16 @@
+{
+  "eventIdColumn": "transactionHash",
+  "activityColumn": "functionName",
+  "timestampColumn": "timestamp.$date",
+  "objectTypes": [
+    { "name": "sender", "idColumn": "sender", "attributes": [] },
+    { "name": "contractaddress", "idColumn": "contractAddress", "attributes": [] }
+  ],
+  "eventAttributes": ["gasUsed", "blockNumber"],
+  "additionalEventSources": [
+    { "arrayPath": "internalTxs", "activityField": "activity", "qualifier": "internalTxs", "includeTypes": [] },
+    { "arrayPath": "events", "activityField": "eventName", "qualifier": "events", "includeTypes": [] }
+  ],
+  "e2oRules": [{ "objectType": "sender", "column": "sender", "qualifier": "initiator" }],
+  "o2oRules": []
+}
